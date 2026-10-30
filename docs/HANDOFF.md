@@ -495,6 +495,10 @@ joining": the single request sent while EOS set up the P2P link was lost); voice
    Join should join it. A player with no usable multiplayer arsenal should only find Quick lobbies. Log: "Quick Join -
    any game type; rules this player can play: mask 0x..." (bit N = rule N; this PC: 0xDFF, no Heavy Only arsenal).
    The rename and the search change were checked on this PC with no lobbies open.
+7. **Mind Reading** (Experimental 85, added 2026-10-30): a Tag Team match with at least one player per team and voice
+   on. Before casting you don't hear the other team; while Mind Reading is active you do; when it ends, only your team
+   again. Log: "voice: Mind Reading on - the other team is heard too" / "over", and "voice: team channel: X heard /
+   muted (other team)".
 
 ## Feature backlog (could be added / revisited)
 Parked ideas and half-finished features, newest first. Each has its notes earlier in this file.

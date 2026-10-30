@@ -621,6 +621,14 @@ namespace pdnet::gamepatches
         // The Lab opened after a test battle sits on top of the battle (menu 1) in the menu stack: its back would return
         // into the battle (a black screen, Experimental 87), so it opens the multiplayer menu instead.
         std::atomic<bool> g_labAfterTest{ false };
+        // Test Arsenal first opens livearsel (67) on its own for the opponent's arsenal. livearsel in scoreboard mode (its
+        // menu parameter 0 = 1) stores a pick with g4 #575 (0x1403de844) and sets livedbtl's parameter 0 to 1, or to 2 when
+        // cancelled, then goes back; that back (HookedPopMenu) copies the pick in as the opponent and opens livedbtl (74),
+        // where the player picks their own arsenal.
+        constexpr int kArsenalPickMenu = 67;
+        std::atomic<bool> g_testPickingOpponent{ false };
+        int16_t& MenuParam(int menu, int slot) { return *reinterpret_cast<int16_t*>(At(0x1403fa3d8 + menu * 0x18 + slot * 2)); }
+        bool CopyArsenalToOpponent(int index); // (below)
         using PushMenuFn = int (*)(int64_t manager, int menu, char force);
         using PopMenuFn = int (*)();
         PushMenuFn g_pushMenu = nullptr; // the original functions (trampolines)
@@ -824,8 +832,9 @@ namespace pdnet::gamepatches
             if (g_testBattle && current == kScoreBattleMenu && menu == kScoreboardMenu)
             {
                 g_testBattle = false;
+                g_labAfterTest = true; // 74 sits on the opponent's arsenal choice: the Lab's back goes to the multiplayer menu
                 Log(L"menu: leaving Test Arsenal - back to the Lab instead of the scoreboard");
-                return g_popMenu(); // 74 was opened on top of the Lab
+                return g_pushMenu(manager, kLabMenu, force);
 
             }
             if (g_testBattle && (menu == kMultiplayerMenu || menu == kLabMenu))
@@ -854,6 +863,18 @@ namespace pdnet::gamepatches
             int64_t manager = MenuManager();
             int current = CurrentMenu(manager);
             Log(L"menu: back (from %d)", current);
+            if (current == kArsenalPickMenu && g_testPickingOpponent.exchange(false))
+            {
+                if (MenuParam(kScoreBattleMenu, 0) == 1 && CopyArsenalToOpponent(*reinterpret_cast<int32_t*>(At(0x1403de844))))
+                {
+                    MenuParam(kScoreBattleMenu, 0) = 0; // livedbtl: open the arsenal choice (the player's own) first
+                    *At(0x1404bbc34) = 0;
+                    return g_pushMenu(manager, kScoreBattleMenu, 0);
+                }
+                g_testBattle = false;
+                Log(L"gamepatch: Test Arsenal: no opponent arsenal picked - back to the Lab");
+                return g_popMenu();
+            }
             if (current == kLabMenu && g_labAfterTest.exchange(false))
             {
                 Log(L"menu: back from the Lab after Test Arsenal - to the multiplayer menu (the battle is under it)");
@@ -1348,6 +1369,13 @@ namespace pdnet::gamepatches
                 {
                     // Only the scoreboard menu adds $LEADERBOARD_ items.
                     if (GetConfig().scoreboard && strncmp(text, "$LEADERBOARD_", 13) == 0 && atoi(text + 13) % 3 != 0) return 0; // Friends / Favorites
+                    if (g_testPickingOpponent && strcmp(text, "Select an arsenal.") == 0) // livearsel, first pick of Test Arsenal
+                    {
+                        int64_t renamed[8];
+                        memcpy(renamed, args, sizeof(renamed));
+                        renamed[0] = reinterpret_cast<int64_t>("Select the OPPONENT's arsenal.\nThe AI will fight with it; you pick yours next.");
+                        return g_addItem(renamed);
+                    }
                     char previous[80];
                     memcpy(previous, g_lastItem, sizeof(previous));
                     memcpy(g_lastItem, text, sizeof(g_lastItem));
@@ -2334,15 +2362,16 @@ namespace pdnet::gamepatches
         // +0x3b08 into the list at *(save + 0x3a30), 100 bytes each). g4 #575 stores the arsenal to use (0x1403de844).
         // livedbtl (74) reads its menu parameter 0 (command 111/110: word at 0x1403fa3d8 + menu * 0x18 + slot * 2):
         // 0 = open the arsenal choice (67) first, 1 = back from it: start the battle.
-        void OpenTestArsenal()
+        // The opponent: a copy of the save's arsenal `index` (100 bytes, list at *(save + 0x3a30); an entry with byte +4
+        // == 0 is empty), named "Test Opponent", marked downloaded.
+        bool CopyArsenalToOpponent(int index)
         {
             uint8_t* save = *reinterpret_cast<uint8_t**>(At(0x1404bec10));
             uint8_t* arsenals = save ? *reinterpret_cast<uint8_t**>(save + 0x3a30) : nullptr;
-            int index = save ? *reinterpret_cast<int32_t*>(save + 0x3b08) : -1;
             if (!arsenals || index < 0 || index >= 16 || arsenals[index * 100 + 4] == 0)
             {
-                Log(L"gamepatch: Test Arsenal: no current arsenal (index %d) - not started", index);
-                return;
+                Log(L"gamepatch: Test Arsenal: arsenal %d isn't there", index);
+                return false;
             }
             memcpy(At(0x1404bc8e0), arsenals + index * 100, 100);
             *reinterpret_cast<uint64_t*>(At(0x14050d270)) = 1; // the row's id (not 0: a player is there)
@@ -2350,14 +2379,29 @@ namespace pdnet::gamepatches
             char* name = reinterpret_cast<char*>(At(0x14050d230));
             memset(name, 0, 0x40);
             strcpy_s(name, 0x40, "Test Opponent");
-            *reinterpret_cast<int32_t*>(At(0x140519abc)) = 3;     // "downloaded"
+            *reinterpret_cast<int32_t*>(At(0x140519abc)) = 3; // "downloaded"
+            Log(L"gamepatch: Test Arsenal: opponent = a copy of arsenal %d", index);
+            return true;
+        }
+
+        void OpenTestArsenal()
+        {
+            uint8_t* save = *reinterpret_cast<uint8_t**>(At(0x1404bec10));
+            int index = save ? *reinterpret_cast<int32_t*>(save + 0x3b08) : -1;
+            if (!CopyArsenalToOpponent(index)) // the current arsenal until the opponent's is picked
+            {
+                Log(L"gamepatch: Test Arsenal: no current arsenal - not started");
+                return;
+            }
             *reinterpret_cast<int32_t*>(At(0x1403de844)) = index; // as g4 #575
-            *reinterpret_cast<int16_t*>(At(0x1403fa3d8 + kScoreBattleMenu * 0x18)) = 0;
+            MenuParam(kArsenalPickMenu, 0) = 1;                   // livearsel in scoreboard mode
+            MenuParam(kScoreBattleMenu, 0) = 0;
             g_testBattle = true;
-            Log(L"gamepatch: Test Arsenal: opponent = a copy of arsenal %d, opening the scoreboard battle (menu %d)", index, kScoreBattleMenu);
+            g_testPickingOpponent = true;
+            Log(L"gamepatch: Test Arsenal: choose the opponent's arsenal (menu %d)", kArsenalPickMenu);
             int64_t manager = MenuManager();
             *At(0x1404bbc34) = 0;
-            g_pushMenu(manager, kScoreBattleMenu, 0);
+            g_pushMenu(manager, kArsenalPickMenu, 0);
             *reinterpret_cast<char*>(manager + 0x1062c) = 0; // no picked label on the new menu (see OpenCaseMenu)
         }
 

@@ -2203,9 +2203,8 @@ namespace pdnet::gamepatches
         // Laboratory (menu 45, also opened from the lobby): Buy Arsenal Case and Sell Arsenal Case after View Stock List
         // (View Tutorial Movie, id 2, is added only in some modes: not in multiplayer), with the shop's hints. The
         // Laboratory adds its rows with menu command 59 (add item with an id: args[0] id, args[1] text) and their hints
-        // with command 40 (HookedAddItem). A pick in such a list is event 100 + the row's id (FUN_14024b000), and its
-        // script state is "MAIN" too, so picking the new rows (ids 3 and 4) is event 103 / 104 with the missing labels
-        // aMAIN_S3 / aMAIN_S4 (CheckSendLogPick);
+        // with command 40 (HookedAddItem). Its window reports a pick by position (event 100 + position, label
+        // aMAIN_S<position>; FUN_14024b000 uses the id only for windows in mode 1), mapped by g_rowAction (CheckSendLogPick);
         // pdnet then opens arsenalbuy (30) / arsenalsell (31) on top the way the script's "open menu" does, and their back
         // returns to the Laboratory, as it does to the shop. (Experimental 79 looked for the rows in command 40: none.)
         const char* kCaseItems[2] = { "Buy Arsenal Case", "Sell Arsenal Case" };
@@ -2224,18 +2223,34 @@ namespace pdnet::gamepatches
             return true;
         }
 
+        // What each row of a command-59 list does when picked, by window and position. The Laboratory's window reports
+        // a pick by POSITION (event 100 + position, label aMAIN_S<position>; its labels are aMAIN_S0-S2 for its rows
+        // with ids 0-2), so with the case rows in between a later row moves down: its pick is mapped back to its
+        // label (aMAIN_S<id>), and the case rows' picks open the case menus (Experimental 82 sent Buy to the movie list).
+        constexpr int kWindows = 16, kRows = 32;
+        constexpr int8_t kRowBuy = 100, kRowSell = 101;
+        int8_t g_rowAction[kWindows][kRows]; // the row's id (its label number), kRowBuy / kRowSell; -1 unknown
+
         MenuCommandFn g_addIdItem = nullptr;
         int64_t HookedAddIdItem(int64_t* args)
         {
+            int64_t manager = MenuManager();
+            int window = manager ? *reinterpret_cast<int16_t*>(manager + 0x10402) : -1;
+            bool tracked = window >= 0 && window < kWindows;
+            int position = tracked ? *reinterpret_cast<int16_t*>(manager + window * 0x103c + 0x56) : 0; // rows so far (FUN_140246770)
+            if (tracked && position == 0) memset(g_rowAction[window], -1, kRows);
             int64_t result = g_addIdItem(args);
+            if (!args) return result;
+            if (tracked && position < kRows) g_rowAction[window][position] = static_cast<int8_t>(args[0] >= 0 && args[0] < kRowBuy ? args[0] : -1);
             char text[32];
-            if (!args || !CaseItemsReady() || !CopyString(reinterpret_cast<const char*>(args[1]), text, sizeof(text)) || strcmp(text, "View Stock List") != 0) return result;
+            if (!CaseItemsReady() || !CopyString(reinterpret_cast<const char*>(args[1]), text, sizeof(text)) || strcmp(text, "View Stock List") != 0) return result;
             for (int i = 0; i < 2; ++i)
             {
                 int64_t item[8] = { 3 + i, reinterpret_cast<int64_t>(kCaseItems[i]) };
                 g_addIdItem(item);
+                if (tracked && position + 1 + i < kRows) g_rowAction[window][position + 1 + i] = i == 0 ? kRowBuy : kRowSell;
             }
-            Log(L"gamepatch: Arsenal Lab: Buy / Sell Arsenal Case items added");
+            Log(L"gamepatch: Arsenal Lab: Buy / Sell Arsenal Case items added (rows %d and %d)", position + 1, position + 2);
             return result;
         }
 
@@ -2289,16 +2304,24 @@ namespace pdnet::gamepatches
         void CheckSendLogPick(int32_t event)
         {
             int64_t manager = MenuManager();
-            if ((event == 103 || event == 104) && manager && CurrentMenu(manager) == kLabMenu && g_pushMenu)
+            if (event >= 100 && event < 100 + kRows && manager && CurrentMenu(manager) == kLabMenu && g_pushMenu)
             {
+                // The Laboratory's main list (state MAIN): see g_rowAction.
                 char label[16];
-                static ULONGLONG lastCase = 0;
-                if (CopyString(reinterpret_cast<const char*>(manager + 0x1062c), label, sizeof(label)) && _stricmp(label, event == 103 ? "aMAIN_S3" : "aMAIN_S4") == 0 &&
-                    GetTickCount64() - lastCase >= 500)
+                int window = *reinterpret_cast<int32_t*>(manager + 0x10418), position = event - 100;
+                if (window < 0 || window >= kWindows || !CopyString(reinterpret_cast<const char*>(manager + 0x1062c), label, sizeof(label)) ||
+                    strncmp(label, "aMAIN_S", 7) != 0 || atoi(label + 7) != position)
+                    return;
+                int action = g_rowAction[window][position];
+                if (action == kRowBuy || action == kRowSell)
                 {
+                    static ULONGLONG lastCase = 0;
+                    if (GetTickCount64() - lastCase < 500) return;
                     lastCase = GetTickCount64();
-                    OpenCaseMenu(event == 103 ? kCaseBuyMenu : kCaseSellMenu);
+                    OpenCaseMenu(action == kRowBuy ? kCaseBuyMenu : kCaseSellMenu);
                 }
+                else if (action >= 0 && action != position)
+                    sprintf_s(reinterpret_cast<char*>(manager + 0x1062c), 12, "aMAIN_S%d", action); // the row's own label (12: the game's strncpy size)
                 return;
             }
             if ((event != 106 && event != 107) || !manager || CurrentMenu(manager) != kOptionsMenu) return;
@@ -2422,6 +2445,7 @@ namespace pdnet::gamepatches
             Log(L"gamepatch: Options > Sound: row %s, sounds %s (aura beeps %s%s)", rows ? L"ready" : L"not added",
                 g_sound2D && g_sound3D ? L"hooked" : L"NOT hooked", GetConfig().auraBeeps ? L"on" : L"off", GetConfig().soundLog ? L", sound_log on" : L"");
             g_logItemReady = g_setState != nullptr;
+            memset(g_rowAction, -1, sizeof(g_rowAction));
             bool caseRows = WrapCommand<MenuCommandFn>(0x1403eefe0 + 59 * 8, 0x140207ec0, &HookedAddIdItem, g_addIdItem, L"Arsenal Lab rows");
             Log(L"gamepatch: Arsenal Lab Buy / Sell Arsenal Case %s", caseRows && CaseItemsReady() ? L"ready" : L"NOT added");
             Log(L"gamepatch: Options > Send Log %s (log_webhook %s)", g_logItemReady ? L"ready" : L"NOT added", GetConfig().logWebhook.empty() ? L"not set" : L"set");

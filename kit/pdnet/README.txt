@@ -23,6 +23,7 @@ What's in the kit
   README.txt          this guide
   Remove.bat          double-click to stop using pdnet (runs remove.ps1)
   Collect-Log.bat     double-click after a test: copies the logs to your Desktop (runs collect-log.ps1)
+  Edit-Settings.bat   double-click to open the in-game Settings file (settings.ini) in Notepad
   Restore-XboxLive.bat  double-click to undo every pdnet change and check Teredo (runs restore-xbl.ps1)
   pdlaunch.exe        loads pdnet into the game when it starts
   pdnet.dll           the pdnet build
@@ -55,6 +56,9 @@ Settings (pdnet.ini in the pdnet folder)
 -----------------------------------
 Change them in the game: multiplayer menu > Settings (left / right on a row; Name: press left or right, type,
 Enter). Or edit pdnet.ini with Notepad, then restart the game.
+What you save in the game goes to settings.ini (in the game's own data folder) and overrides pdnet.ini.
+To change those by hand, e.g. an exact nametag colour, close the game and double-click pdnet\Edit-Settings.bat.
+Colours take any hex code: RRGGBB or #RRGGBB.
   display_name=          your name (Setup.bat sets it)
   nametags_on_bodies=    on/off: defeated players keep their nametag. In a lobby the HOST's setting applies.
   dead_nametag_color=    colour of a defeated player's nametag (RRGGBB), FFE600 = yellow

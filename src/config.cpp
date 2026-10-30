@@ -36,6 +36,22 @@ namespace pdnet
             return dir.substr(0, dir.find_last_of(L'\\') + 1) + L"pdnet.ini";
         }
 
+        // A colour typed as RRGGBB or #RRGGBB; anything else keeps the current colour.
+        void ReadColour(const std::string& value, uint32_t& colour)
+        {
+            std::string hex = !value.empty() && value[0] == '#' ? value.substr(1) : value;
+            if (hex.size() != 6 || !std::all_of(hex.begin(), hex.end(), [](unsigned char ch) { return std::isxdigit(ch); }))
+            {
+                Log(L"config: colour '%S' ignored (use 6 hex digits, e.g. FF5A5A)", value.c_str());
+                return;
+            }
+            colour = 0xFF000000u | std::stoul(hex, nullptr, 16);
+        }
+
+        // The top of settings.ini. Files written before the second line existed get it on their next save.
+        constexpr char kSettingsHeader[] = "; pdnet settings saved from the game's Settings menu (they override pdnet.ini)";
+        constexpr char kSettingsHelp[] = "; You can edit this file by hand with the game closed. Colours take any hex code (RRGGBB), e.g. 7FFFD4.";
+
         std::wstring g_iniPath; // the pdnet.ini Load read
 
         // Where the in-game Settings menu saves (the game, a UWP app, can write only its own data folders).
@@ -80,9 +96,9 @@ namespace pdnet
                 else if (key == "voice_talk_icon_x" && !value.empty()) c.voiceTalkIconX = std::stoi(value);
                 else if (key == "icon_gallery") c.iconGallery = _stricmp(value.c_str(), "on") == 0;
                 else if (key == "nametags_on_bodies") c.nametagsOnBodies = _stricmp(value.c_str(), "off") != 0;
-                else if (key == "dead_nametag_color" && value.size() == 6) c.deadNametagColor = 0xFF000000u | std::stoul(value, nullptr, 16);
-                else if (key == "ally_nametag_color" && value.size() == 6) c.allyNametagColor = 0xFF000000u | std::stoul(value, nullptr, 16);
-                else if (key == "enemy_nametag_color" && value.size() == 6) c.enemyNametagColor = 0xFF000000u | std::stoul(value, nullptr, 16);
+                else if (key == "dead_nametag_color") ReadColour(value, c.deadNametagColor);
+                else if (key == "ally_nametag_color") ReadColour(value, c.allyNametagColor);
+                else if (key == "enemy_nametag_color") ReadColour(value, c.enemyNametagColor);
                 else if (key == "nametag_debug") c.nametagDebug = _stricmp(value.c_str(), "deep") == 0 ? 2 : _stricmp(value.c_str(), "on") == 0 ? 1 : 0;
                 else if (key == "name_trace") c.nameTrace = _stricmp(value.c_str(), "memory") == 0 ? 1 : (_stricmp(value.c_str(), "draw") == 0 || _stricmp(value.c_str(), "on") == 0) ? 2 : 0;
                 else if (key == "discord_webhook") c.discordWebhook = std::wstring(value.begin(), value.end());
@@ -150,7 +166,8 @@ namespace pdnet
                 lines.push_back(line);
             }
         }
-        if (lines.empty()) lines.push_back("; pdnet settings saved from the game's Settings menu (they override pdnet.ini)");
+        if (lines.empty()) lines.push_back(kSettingsHeader);
+        if (lines[0] == kSettingsHeader && (lines.size() < 2 || lines[1] != kSettingsHelp)) lines.insert(lines.begin() + 1, kSettingsHelp);
         for (auto& [key, value] : values)
         {
             bool found = false;

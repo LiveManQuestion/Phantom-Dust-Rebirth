@@ -2405,6 +2405,20 @@ namespace pdnet::gamepatches
             *reinterpret_cast<char*>(manager + 0x1062c) = 0; // no picked label on the new menu (see OpenCaseMenu)
         }
 
+        // Opening livearsel on the frame of the A press that picked Test Arsenal let that press confirm its first arsenal as
+        // soon as it loaded (Experimental 89: the opponent screen closed by itself). Test Arsenal opens it 0.3 s later, on a
+        // frame with no input, while the Lab is still on screen.
+        std::atomic<ULONGLONG> g_testPendingAt{ 0 };
+        void OpenPendingTestArsenal(int32_t event)
+        {
+            ULONGLONG at = g_testPendingAt;
+            if (!at) return;
+            if (CurrentMenu(MenuManager()) != kLabMenu) { g_testPendingAt = 0; return; }
+            if (event != 0 || GetTickCount64() - at < 300) return;
+            g_testPendingAt = 0;
+            OpenTestArsenal();
+        }
+
         bool LogItems(const char* added, int64_t* args, int64_t& result)
         {
             // Only the Options scripts add $KEYBOARD items. No menu check: the list is built before menu 4 is current.
@@ -2457,7 +2471,7 @@ namespace pdnet::gamepatches
                     static ULONGLONG lastCase = 0;
                     if (GetTickCount64() - lastCase < 500) return;
                     lastCase = GetTickCount64();
-                    if (action == kRowTest) OpenTestArsenal();
+                    if (action == kRowTest) g_testPendingAt = GetTickCount64(); // opened a moment later (HookedSetState)
                     else OpenCaseMenu(action == kRowBuy ? kCaseBuyMenu : kCaseSellMenu);
                 }
                 else if (action >= 0 && action != position)
@@ -2508,6 +2522,7 @@ namespace pdnet::gamepatches
             int32_t event = manager ? *reinterpret_cast<int32_t*>(manager + 0x10414) : 0;
             int64_t result = g_setState(args);
             CheckSendLogPick(event);
+            OpenPendingTestArsenal(event);
             return result;
         }
         int64_t HookedSetState12(int64_t* args) { NoteState(args); return g_setState12(args); }

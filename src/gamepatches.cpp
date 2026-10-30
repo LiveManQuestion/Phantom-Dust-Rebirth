@@ -618,6 +618,9 @@ namespace pdnet::gamepatches
         // feedback?", Cheating...), dead without Xbox Live and removed: a Test Arsenal battle goes back to the Lab,
         // any other to the scoreboard, where the feedback screen would have gone.
         constexpr int kFeedbackMenu = 75;
+        // The Lab opened after a test battle sits on top of the battle (menu 1) in the menu stack: its back would return
+        // into the battle (a black screen, Experimental 87), so it opens the multiplayer menu instead.
+        std::atomic<bool> g_labAfterTest{ false };
         using PushMenuFn = int (*)(int64_t manager, int menu, char force);
         using PopMenuFn = int (*)();
         PushMenuFn g_pushMenu = nullptr; // the original functions (trampolines)
@@ -814,7 +817,7 @@ namespace pdnet::gamepatches
             if (menu == kFeedbackMenu)
             {
                 int to = g_testBattle ? kLabMenu : kScoreboardMenu;
-                g_testBattle = false;
+                g_labAfterTest = g_testBattle.exchange(false);
                 Log(L"menu: player feedback screen skipped - menu %d instead", to);
                 return g_pushMenu(manager, to, force);
             }
@@ -822,7 +825,8 @@ namespace pdnet::gamepatches
             {
                 g_testBattle = false;
                 Log(L"menu: leaving Test Arsenal - back to the Lab instead of the scoreboard");
-                return g_pushMenu(manager, kLabMenu, force);
+                return g_popMenu(); // 74 was opened on top of the Lab
+
             }
             if (g_testBattle && (menu == kMultiplayerMenu || menu == kLabMenu))
             {
@@ -850,6 +854,12 @@ namespace pdnet::gamepatches
             int64_t manager = MenuManager();
             int current = CurrentMenu(manager);
             Log(L"menu: back (from %d)", current);
+            if (current == kLabMenu && g_labAfterTest.exchange(false))
+            {
+                Log(L"menu: back from the Lab after Test Arsenal - to the multiplayer menu (the battle is under it)");
+                *At(0x1404bbc34) = 0;
+                return g_pushMenu(manager, kMultiplayerMenu, 0);
+            }
             if (current == kLabMenu && g_editorFromLobby.exchange(false)) // the Laboratory's back: the lobby is under it
             {
                 if (g_lobbyEndedInEditor.exchange(false))

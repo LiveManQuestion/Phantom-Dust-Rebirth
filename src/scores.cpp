@@ -18,6 +18,8 @@ namespace pdnet::scores
     std::vector<Record> Ranks(const std::string&) { return {}; }
     std::map<std::string, std::string> DisplayNames(const std::vector<std::string>&) { return {}; }
     std::map<std::string, int32_t> UserScores(const std::string&, const std::vector<std::string>&) { return {}; }
+    void SubmitGhost(const std::vector<int32_t>&) {}
+    std::vector<int32_t> GhostOf(const std::string&) { return {}; }
 }
 
 #else
@@ -182,6 +184,7 @@ namespace pdnet::scores
         if (!GetConfig().scoreboard || !eos::SignedIn()) return {};
         SubmitRating(gamepatches::SavedRating()); // once per session (and after any change): players show up before their next match
         SubmitName();
+        gamepatches::SendOwnGhostOnce(); // a ghost for the scoreboard battle before the next match too
         {
             std::lock_guard guard(g_lock);
             auto it = g_ranks.find(board);
@@ -348,6 +351,58 @@ namespace pdnet::scores
                     api->EOS_Leaderboards_LeaderboardUserScore_Release(s);
                 }
                 finish(std::move(out));
+            } };
+            api.EOS_Leaderboards_QueryLeaderboardUserScores(boards, &o, done, &Pending<EOS_Leaderboards_OnQueryLeaderboardUserScoresCompleteCallbackInfo>::Thunk);
+        });
+    }
+
+    namespace
+    {
+        std::string GhostStat(int i) { return "Ghost" + std::to_string(i); }
+    }
+
+    void SubmitGhost(const std::vector<int32_t>& packed)
+    {
+        if (!GetConfig().scoreboard || !eos::SignedIn() || packed.size() != kGhostStats) return;
+        std::vector<std::pair<std::string, int>> amounts;
+        for (int i = 0; i < kGhostStats; ++i) amounts.emplace_back(GhostStat(i), packed[i]);
+        Ingest(amounts);
+    }
+
+    std::vector<int32_t> GhostOf(const std::string& userId)
+    {
+        if (!GetConfig().scoreboard || !eos::SignedIn() || userId.empty()) return {};
+        return Run<std::vector<int32_t>>(L"ghost query", [userId](const Api& api, EOS_HPlatform platform, EOS_ProductUserId user, std::function<void(std::vector<int32_t>)> finish)
+        {
+            EOS_HLeaderboards boards = api.EOS_Platform_GetLeaderboardsInterface(platform);
+            EOS_ProductUserId id = api.EOS_ProductUserId_FromString(userId.c_str());
+            auto statNames = std::make_shared<std::vector<std::string>>();
+            for (int i = 0; i < kGhostStats; ++i) statNames->push_back(GhostStat(i));
+            std::vector<EOS_Leaderboards_UserScoresQueryStatInfo> info;
+            for (auto& n : *statNames) info.push_back({ EOS_LEADERBOARDS_USERSCORESQUERYSTATINFO_API_LATEST, n.c_str(), EOS_ELeaderboardAggregation::EOS_LA_Latest });
+            EOS_Leaderboards_QueryLeaderboardUserScoresOptions o{ EOS_LEADERBOARDS_QUERYLEADERBOARDUSERSCORES_API_LATEST, &id, 1,
+                                                                  info.data(), static_cast<uint32_t>(info.size()), EOS_LEADERBOARDS_TIME_UNDEFINED, EOS_LEADERBOARDS_TIME_UNDEFINED, user };
+            auto done = new Pending<EOS_Leaderboards_OnQueryLeaderboardUserScoresCompleteCallbackInfo>{ [boards, statNames, finish](const EOS_Leaderboards_OnQueryLeaderboardUserScoresCompleteCallbackInfo* info)
+            {
+                const Api* api = eossdk::Load(ModuleDir());
+                if (info->ResultCode != EOS_EResult::EOS_Success)
+                {
+                    Log(L"scores: ghost query failed - %s (are the Ghost0-%d stats set up in the EOS Developer Portal?)", Result(*api, info->ResultCode).c_str(), kGhostStats - 1);
+                    finish({});
+                    return;
+                }
+                std::vector<int32_t> values(kGhostStats, 0);
+                bool any = false;
+                for (int s = 0; s < kGhostStats; ++s)
+                {
+                    EOS_Leaderboards_CopyLeaderboardUserScoreByIndexOptions so{ EOS_LEADERBOARDS_COPYLEADERBOARDUSERSCOREBYINDEX_API_LATEST, 0, (*statNames)[s].c_str() };
+                    EOS_Leaderboards_LeaderboardUserScore* score = nullptr;
+                    if (api->EOS_Leaderboards_CopyLeaderboardUserScoreByIndex(boards, &so, &score) != EOS_EResult::EOS_Success || !score) continue;
+                    values[s] = score->Score;
+                    any = true;
+                    api->EOS_Leaderboards_LeaderboardUserScore_Release(score);
+                }
+                finish(any ? std::move(values) : std::vector<int32_t>{});
             } };
             api.EOS_Leaderboards_QueryLeaderboardUserScores(boards, &o, done, &Pending<EOS_Leaderboards_OnQueryLeaderboardUserScoresCompleteCallbackInfo>::Thunk);
         });

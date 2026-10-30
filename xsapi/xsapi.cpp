@@ -69,6 +69,17 @@ namespace pdnet::xsapi
         return it == g_users.end() ? std::string{} : it->second;
     }
 
+    std::string EosUserOfName(const std::wstring& name)
+    {
+        if (name.empty()) return {};
+        if (name == GetConfig().displayName) return lobbies::LocalUserId();
+        std::lock_guard guard(g_namesLock);
+        for (auto& [xuid, n] : g_names)
+            if (n == name)
+                if (auto it = g_users.find(xuid); it != g_users.end()) return it->second;
+        return {};
+    }
+
     void RememberName(const std::wstring& xuid, const std::wstring& name)
     {
         std::lock_guard guard(g_namesLock);

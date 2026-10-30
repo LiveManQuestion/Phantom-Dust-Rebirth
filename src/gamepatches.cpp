@@ -15,6 +15,12 @@
 #include <set>
 #include <tuple>
 
+namespace pdnet::xsapi // xsapi/xsapi.cpp: the EOS player behind a scoreboard row
+{
+    std::string EosUserOf(const std::wstring& xuid);
+    std::string EosUserOfName(const std::wstring& name);
+}
+
 namespace pdnet::gamepatches
 {
     namespace
@@ -27,6 +33,8 @@ namespace pdnet::gamepatches
         std::atomic<uint8_t> g_bodyTagsNow{ 0 };
         std::atomic<uint8_t> g_slotGone[4]{}; // per match slot: that player left (no nametag), set by NametagColours
         std::atomic<bool> g_testBattle{ false }; // Lab > Test Arsenal's battle is on (OpenTestArsenal); its AI is no network player
+        std::atomic<bool> g_ghostBattle{ false }; // a scoreboard battle against a player's ghost is on (HookedClipDownload)
+        bool AiBattle() { return g_testBattle || g_ghostBattle; } // no left players, wins or rating changes then
         std::atomic<uint64_t> g_tagColour[8]{ ~0ull, ~0ull, ~0ull, ~0ull, ~0ull, ~0ull, ~0ull, ~0ull };
         std::atomic<uint64_t> g_deadColour{ ~0ull }; // a dead player's nametag colour, twice (read by the colour routine)
         std::atomic<uint8_t> g_playDead[4]{}; // per player slot: lying in Play Dead (TrackPlayDead), read by the colour routine
@@ -377,7 +385,7 @@ namespace pdnet::gamepatches
             for (int s = 0; s < 4; ++s)
             {
                 // Test Arsenal's AI opponent is never a network player: nobody counts as left there.
-                uint8_t gone = match && !g_testBattle && v.matchName[s][0] && !present[s] ? 1 : 0;
+                uint8_t gone = match && !AiBattle() && v.matchName[s][0] && !present[s] ? 1 : 0;
                 if (g_slotGone[s].exchange(gone) != gone && gone) Log(L"gamepatch: %S left the match - nametag hidden", v.matchName[s]);
             }
         }
@@ -826,9 +834,11 @@ namespace pdnet::gamepatches
             {
                 int to = g_testBattle ? kLabMenu : kScoreboardMenu;
                 g_labAfterTest = g_testBattle.exchange(false);
+                g_ghostBattle = false;
                 Log(L"menu: player feedback screen skipped - menu %d instead", to);
                 return g_pushMenu(manager, to, force);
             }
+            if (g_ghostBattle && (menu == kScoreboardMenu || menu == kMultiplayerMenu)) g_ghostBattle = false; // backed out
             if (g_testBattle && current == kScoreBattleMenu && menu == kScoreboardMenu)
             {
                 g_testBattle = false;
@@ -1256,6 +1266,65 @@ namespace pdnet::gamepatches
             }).detach();
         }
 
+        // Ghosts: the scoreboard battle's AI fights with a player's arsenal. The original game sent it after a rating
+        // change as the RatingClipUpload event (dimensions Ranking and GameClip, FUN_1400bf1f0 -> FUN_1400b6010) and read
+        // it for each scoreboard row as the Xbox Live text statistic RatingGameClip (FUN_1400e2a20); the text
+        // ("x%08x|%08x|..." plus a signature, FUN_1400bf560 / FUN_140109060 / FUN_140109360) holds these fields of the
+        // 100-byte arsenal record: +0 (int), +0x50 and +0x52 (words), +0x54..+0x60 (ints, the arsenal's battle results)
+        // and the 30 skills at +0x14 (words). pdnet keeps them in the EOS stats Ghost0-13 (scores.h), 31 bits each:
+        //   Ghost0 = 1 << 30 (a ghost is there) | high 16 bits of +0,  Ghost1 = its low 16 bits,
+        //   Ghost2 = +0x50, Ghost3 = +0x52,  Ghost4-13 = three skills each, 10 bits apiece (0x3ff = an empty slot);
+        // the battle results aren't kept (the opponent starts with none).
+        constexpr int32_t kGhostThere = 1 << 30;
+        constexpr int kSkillBits = 10, kNoSkill = (1 << kSkillBits) - 1;
+
+        std::vector<int32_t> PackGhost(const uint8_t* arsenal)
+        {
+            std::vector<int32_t> out(scores::kGhostStats, 0);
+            uint32_t first = *reinterpret_cast<const uint32_t*>(arsenal);
+            out[0] = kGhostThere | static_cast<int32_t>(first >> 16);
+            out[1] = static_cast<int32_t>(first & 0xffff);
+            out[2] = *reinterpret_cast<const uint16_t*>(arsenal + 0x50);
+            out[3] = *reinterpret_cast<const uint16_t*>(arsenal + 0x52);
+            for (int i = 0; i < 30; ++i)
+            {
+                int16_t skill = *reinterpret_cast<const int16_t*>(arsenal + 0x14 + i * 2);
+                int bits = skill < 0 ? kNoSkill : skill;
+                if (bits > kNoSkill) return {}; // not a skill id this packing can hold
+                out[4 + i / 3] |= bits << (kSkillBits * (i % 3));
+            }
+            return out;
+        }
+
+        bool UnpackGhost(const std::vector<int32_t>& v, uint8_t* arsenal)
+        {
+            if (v.size() != static_cast<size_t>(scores::kGhostStats) || !(v[0] & kGhostThere)) return false;
+            memset(arsenal, 0, 100);
+            *reinterpret_cast<uint32_t*>(arsenal) = static_cast<uint32_t>(v[0] & 0xffff) << 16 | static_cast<uint32_t>(v[1] & 0xffff);
+            *reinterpret_cast<uint16_t*>(arsenal + 0x50) = static_cast<uint16_t>(v[2]);
+            *reinterpret_cast<uint16_t*>(arsenal + 0x52) = static_cast<uint16_t>(v[3]);
+            for (int i = 0; i < 30; ++i)
+            {
+                int bits = v[4 + i / 3] >> (kSkillBits * (i % 3)) & kNoSkill;
+                *reinterpret_cast<int16_t*>(arsenal + 0x14 + i * 2) = static_cast<int16_t>(bits == kNoSkill ? -1 : bits);
+            }
+            return true;
+        }
+
+        // After a finished online match: the arsenal it was played with (save +0x3b08, set at the match's start) is
+        // this player's ghost from now on.
+        void SubmitOwnGhost()
+        {
+            uint8_t* save = *reinterpret_cast<uint8_t**>(At(0x1404bec10));
+            uint8_t* arsenals = save ? *reinterpret_cast<uint8_t**>(save + 0x3a30) : nullptr;
+            int index = save ? *reinterpret_cast<int32_t*>(save + 0x3b08) : -1;
+            if (!arsenals || index < 0 || index >= 16 || arsenals[index * 100 + 4] == 0) return;
+            auto packed = PackGhost(arsenals + index * 100);
+            if (packed.empty()) { Log(L"gamepatch: ghost of arsenal %d not sent - a skill id doesn't fit", index); return; }
+            Log(L"gamepatch: ghost sent (arsenal %d)", index);
+            scores::SubmitGhost(packed);
+        }
+
         // Rated / Unrated lobbies (rated_lobbies=on). The create-session menu's Rating option (No Restrictions /
         // With Restrictions: session number ratinglimit 0 / 1, originally "only players within 200 of the host")
         // becomes Unrated / Rated; the lobby search's Rating option then finds one kind or the other, and the ±200
@@ -1484,6 +1553,11 @@ namespace pdnet::gamepatches
             int rated = scores::RatedMatch();
             if (rated < 0) rated = last; // the session can be gone by the end of the match
             else last = rated;
+            if (AiBattle())
+            {
+                Log(L"gamepatch: rating change %lld not applied (battle against an AI)", change);
+                return g_applyRating(a, 0, c, d, e, f);
+            }
             if (rated != 1)
             {
                 Log(L"gamepatch: rating change %lld not applied (%s match)", change, rated == 0 ? L"Unrated" : L"unknown -> Unrated");
@@ -1496,6 +1570,7 @@ namespace pdnet::gamepatches
                 static const char* kModes[] = { "BattleRoyaleWin", "TagTeamWin", "OneOnOneWin" };
                 int type = *reinterpret_cast<int32_t*>(At(0x1405277b4));
                 scores::MatchPlayed(type >= 0 && type < 3 ? kModes[type] : "", gamepatches::SavedRating());
+                SubmitOwnGhost();
             }
             return result;
         }
@@ -2419,6 +2494,45 @@ namespace pdnet::gamepatches
             OpenTestArsenal();
         }
 
+        // The scoreboard's "download game clip" (g4 #659, args[0] = the row): the original copies the row and decodes
+        // its RatingGameClip text, which pdnet's rows don't have (status 2). Here the row's player (row +0: the id
+        // pdnet's leaderboard gave the game; else by name, row +0xc) gets their Ghost stats from EOS on a thread:
+        // status 1 (the script waits) until the opponent's arsenal is filled in (3) or there is no ghost (4: the
+        // game says the clip is damaged).
+        NativeFn g_clipDownload = nullptr;
+        int64_t HookedClipDownload(int64_t* args)
+        {
+            int64_t result = g_clipDownload(args); // copies the row's name and the rest for the battle screen
+            int row = args ? static_cast<int>(args[0]) : -1;
+            if (row < 0 || row >= 64) return result;
+            auto status = reinterpret_cast<volatile int32_t*>(At(0x140519abc));
+            uint8_t* entry = At(0x14051d4c0 + row * 0x4c);
+            uint64_t id = *reinterpret_cast<uint64_t*>(entry);
+            char name[0x41] = {};
+            memcpy(name, entry + 0xc, 0x40);
+            std::wstring wname{ winrt::to_hstring(name) };
+            std::string user = xsapi::EosUserOf(std::to_wstring(id));
+            if (user.empty()) user = xsapi::EosUserOfName(wname);
+            Log(L"gamepatch: ghost download for row %d ('%s', id %llu): %S", row, wname.c_str(), id, user.empty() ? "no EOS player known" : user.c_str());
+            if (user.empty()) { *status = 4; return result; }
+            *status = 1;
+            std::thread([user, wname, status]
+            {
+                uint8_t arsenal[100];
+                if (!UnpackGhost(scores::GhostOf(user), arsenal))
+                {
+                    Log(L"gamepatch: %s has no ghost yet (they need to finish an online match with this pdnet)", wname.c_str());
+                    *status = 4;
+                    return;
+                }
+                memcpy(At(0x1404bc8e0), arsenal, 100);
+                g_ghostBattle = true;
+                *status = 3;
+                Log(L"gamepatch: ghost of %s loaded", wname.c_str());
+            }).detach();
+            return result;
+        }
+
         bool LogItems(const char* added, int64_t* args, int64_t& result)
         {
             // Only the Options scripts add $KEYBOARD items. No menu check: the list is built before menu 4 is current.
@@ -2601,6 +2715,11 @@ namespace pdnet::gamepatches
                 g_sound2D && g_sound3D ? L"hooked" : L"NOT hooked", GetConfig().auraBeeps ? L"on" : L"off", GetConfig().soundLog ? L", sound_log on" : L"");
             g_logItemReady = g_setState != nullptr;
             memset(g_rowAction, -1, sizeof(g_rowAction));
+            if (GetConfig().scoreboard)
+            {
+                bool ghosts = WrapCommand<NativeFn>(0x1403f0090 + 659 * 8, 0x140214740, &HookedClipDownload, g_clipDownload, L"scoreboard ghost download");
+                Log(L"gamepatch: scoreboard ghost battles %s", ghosts ? L"ready (Ghost0-13 stats)" : L"NOT ready");
+            }
             bool caseRows = WrapCommand<MenuCommandFn>(0x1403eefe0 + 59 * 8, 0x140207ec0, &HookedAddIdItem, g_addIdItem, L"Arsenal Lab rows");
             Log(L"gamepatch: Arsenal Lab Buy / Sell Arsenal Case %s", caseRows && CaseItemsReady() ? L"ready" : L"NOT added");
             Log(L"gamepatch: Options > Send Log %s (log_webhook %s)", g_logItemReady ? L"ready" : L"NOT added", GetConfig().logWebhook.empty() ? L"not set" : L"set");
@@ -3131,7 +3250,13 @@ namespace pdnet::gamepatches
         return true;
     }
 
-    bool TestBattle() { return g_testBattle; }
+    bool TestBattle() { return AiBattle(); }
+
+    void SendOwnGhostOnce()
+    {
+        static std::atomic<bool> sent{ false };
+        if (MultiplayerProfile() && !sent.exchange(true)) SubmitOwnGhost();
+    }
 
     // Mind Reading is status effect 0x25. The game's voice rule (FUN_1400c61f0, run for each received voice buffer) plays
     // a buffer when the chat manager (*(DAT_1404bbc48 + 0x18)) has +0xac set or the sender's channel equals +0xa8 (the

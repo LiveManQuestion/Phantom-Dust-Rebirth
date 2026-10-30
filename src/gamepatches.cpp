@@ -2242,8 +2242,13 @@ namespace pdnet::gamepatches
         void OpenCaseMenu(int menu)
         {
             Log(L"gamepatch: Arsenal Lab: %s Arsenal Case picked", menu == kCaseBuyMenu ? L"Buy" : L"Sell");
+            int64_t manager = MenuManager();
             *At(0x1404bbc34) = 0; // as FUN_140207020 (the script's "open menu")
-            g_pushMenu(MenuManager(), menu, 0);
+            g_pushMenu(manager, menu, 0);
+            // After the state script (command 6 runs in it), the frame's menu update (FUN_140248230) runs the picked
+            // label (+0x1062c, "aMAIN_S3") on the CURRENT menu's script: now the case menu, whose script is still
+            // loading (null) - a crash in FUN_1402ab5d0 (Experimental 81). No label: nothing runs.
+            *reinterpret_cast<char*>(manager + 0x1062c) = 0;
         }
 
         bool LogItems(const char* added, int64_t* args, int64_t& result)

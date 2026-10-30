@@ -608,6 +608,11 @@ namespace pdnet::gamepatches
         // to the lobby with the lobby's state restored, like the lobby's own Change Arsenal.
         constexpr int kLobbyMenu = 44, kLabMenu = 45, kStockMenu = 63, kEditorMenu = 64, kCaseBuyMenu = 30, kCaseSellMenu = 31;
         bool InLabMenus(int menu) { return menu == kLabMenu || menu == kStockMenu || menu == kEditorMenu || menu == kCaseBuyMenu || menu == kCaseSellMenu; }
+        // Lab > Test Arsenal (OpenTestArsenal) runs the scoreboard battle: livedbtl 74 (arsenal choice, then the battle),
+        // livearsel 67, compe_res 78 (results, then the multiplayer menu 36). Its back to the scoreboard (41) goes to the
+        // Lab instead, and wins in it don't count for the EOS scoreboard (TestBattle).
+        constexpr int kScoreBattleMenu = 74, kScoreboardMenu = 41, kMultiplayerMenu = 36;
+        std::atomic<bool> g_testBattle{ false };
         using PushMenuFn = int (*)(int64_t manager, int menu, char force);
         using PopMenuFn = int (*)();
         PushMenuFn g_pushMenu = nullptr; // the original functions (trampolines)
@@ -801,6 +806,17 @@ namespace pdnet::gamepatches
             if (menu == 68) g_settingsOpenedAt = GetTickCount64();
             RenameStrings(); // cheap; covers string tables loaded after start-up
             if (menu != current) Log(L"menu: open %d (from %d)", menu, current);
+            if (g_testBattle && current == kScoreBattleMenu && menu == kScoreboardMenu)
+            {
+                g_testBattle = false;
+                Log(L"menu: leaving Test Arsenal - back to the Lab instead of the scoreboard");
+                return g_pushMenu(manager, kLabMenu, force);
+            }
+            if (g_testBattle && (menu == kMultiplayerMenu || menu == kLabMenu))
+            {
+                g_testBattle = false;
+                Log(L"gamepatch: Test Arsenal over");
+            }
             if (g_editorFromLobby && InLabMenus(current) && !InLabMenus(menu))
             {
                 g_editorFromLobby = false;
@@ -2210,6 +2226,10 @@ namespace pdnet::gamepatches
         const char* kCaseItems[2] = { "Buy Arsenal Case", "Sell Arsenal Case" };
         const char* kCaseHints[2] = { "Buy an arsenal case.\nA case is necessary to create a new arsenal.", "Sell arsenal cases that you don't need." };
         bool CaseItemsReady() { return g_logItemReady && g_pushMenu; } // no items that can't work
+        // Test Arsenal: only in the Lab of the multiplayer menu, not the lobby's (a battle from there would break the lobby).
+        const char* kTestItem = "Test Arsenal";
+        const char* kTestHint = "Battle an AI copy of your arsenal to try it out.\nNo rewards, nothing counts for the scoreboard.";
+        bool TestItemWanted() { return CaseItemsReady() && !g_editorFromLobby; }
 
         bool CaseItems(const char* added, int64_t* args, int64_t& result)
         {
@@ -2220,6 +2240,11 @@ namespace pdnet::gamepatches
                 int64_t item[8] = { reinterpret_cast<int64_t>(hint) };
                 g_addItem(item);
             }
+            if (TestItemWanted())
+            {
+                int64_t item[8] = { reinterpret_cast<int64_t>(kTestHint) };
+                g_addItem(item);
+            }
             return true;
         }
 
@@ -2228,7 +2253,7 @@ namespace pdnet::gamepatches
         // with ids 0-2), so with the case rows in between a later row moves down: its pick is mapped back to its
         // label (aMAIN_S<id>), and the case rows' picks open the case menus (Experimental 82 sent Buy to the movie list).
         constexpr int kWindows = 16, kRows = 32;
-        constexpr int8_t kRowBuy = 100, kRowSell = 101;
+        constexpr int8_t kRowBuy = 100, kRowSell = 101, kRowTest = 102;
         int8_t g_rowAction[kWindows][kRows]; // the row's id (its label number), kRowBuy / kRowSell; -1 unknown
 
         MenuCommandFn g_addIdItem = nullptr;
@@ -2250,7 +2275,13 @@ namespace pdnet::gamepatches
                 g_addIdItem(item);
                 if (tracked && position + 1 + i < kRows) g_rowAction[window][position + 1 + i] = i == 0 ? kRowBuy : kRowSell;
             }
-            Log(L"gamepatch: Arsenal Lab: Buy / Sell Arsenal Case items added (rows %d and %d)", position + 1, position + 2);
+            if (TestItemWanted())
+            {
+                int64_t item[8] = { 5, reinterpret_cast<int64_t>(kTestItem) };
+                g_addIdItem(item);
+                if (tracked && position + 3 < kRows) g_rowAction[window][position + 3] = kRowTest;
+            }
+            Log(L"gamepatch: Arsenal Lab: Buy / Sell Arsenal Case items added (rows %d and %d)%s", position + 1, position + 2, TestItemWanted() ? L", Test Arsenal (row after)" : L"");
             return result;
         }
 
@@ -2271,6 +2302,41 @@ namespace pdnet::gamepatches
             // label (+0x1062c, "aMAIN_S3") on the CURRENT menu's script: now the case menu, whose script is still
             // loading (null) - a crash in FUN_1402ab5d0 (Experimental 81). No label: nothing runs.
             *reinterpret_cast<char*>(manager + 0x1062c) = 0;
+        }
+
+        // Lab > Test Arsenal: the scoreboard battle against an AI, as liveranking starts it once a player's "game clip" is
+        // downloaded (g4 #659 = FUN_140183e80): that copies the picked row (0x4c bytes at 0x14051d4c0 + row * 0x4c: id,
+        // a number, the name in 0x40 bytes) to 0x14050d230.. and decodes the row's arsenal text into the opponent's
+        // 100-byte arsenal record at 0x1404bc8e0 (FUN_1400bf950: same layout as the save's arsenals), status
+        // 0x140519abc = 3 (g4 #660 reads it). Here the opponent is a copy of this player's current arsenal (save
+        // +0x3b08 into the list at *(save + 0x3a30), 100 bytes each). g4 #575 stores the arsenal to use (0x1403de844).
+        // livedbtl (74) reads its menu parameter 0 (command 111/110: word at 0x1403fa3d8 + menu * 0x18 + slot * 2):
+        // 0 = open the arsenal choice (67) first, 1 = back from it: start the battle.
+        void OpenTestArsenal()
+        {
+            uint8_t* save = *reinterpret_cast<uint8_t**>(At(0x1404bec10));
+            uint8_t* arsenals = save ? *reinterpret_cast<uint8_t**>(save + 0x3a30) : nullptr;
+            int index = save ? *reinterpret_cast<int32_t*>(save + 0x3b08) : -1;
+            if (!arsenals || index < 0 || index >= 16 || arsenals[index * 100 + 4] == 0)
+            {
+                Log(L"gamepatch: Test Arsenal: no current arsenal (index %d) - not started", index);
+                return;
+            }
+            memcpy(At(0x1404bc8e0), arsenals + index * 100, 100);
+            *reinterpret_cast<uint64_t*>(At(0x14050d270)) = 1; // the row's id (not 0: a player is there)
+            *reinterpret_cast<int32_t*>(At(0x14050d278)) = 0;
+            char* name = reinterpret_cast<char*>(At(0x14050d230));
+            memset(name, 0, 0x40);
+            strcpy_s(name, 0x40, "Test Opponent");
+            *reinterpret_cast<int32_t*>(At(0x140519abc)) = 3;     // "downloaded"
+            *reinterpret_cast<int32_t*>(At(0x1403de844)) = index; // as g4 #575
+            *reinterpret_cast<int16_t*>(At(0x1403fa3d8 + kScoreBattleMenu * 0x18)) = 0;
+            g_testBattle = true;
+            Log(L"gamepatch: Test Arsenal: opponent = a copy of arsenal %d, opening the scoreboard battle (menu %d)", index, kScoreBattleMenu);
+            int64_t manager = MenuManager();
+            *At(0x1404bbc34) = 0;
+            g_pushMenu(manager, kScoreBattleMenu, 0);
+            *reinterpret_cast<char*>(manager + 0x1062c) = 0; // no picked label on the new menu (see OpenCaseMenu)
         }
 
         bool LogItems(const char* added, int64_t* args, int64_t& result)
@@ -2320,12 +2386,13 @@ namespace pdnet::gamepatches
                     strncmp(label, "aMAIN_S", 7) != 0 || atoi(label + 7) != position)
                     return;
                 int action = g_rowAction[window][position];
-                if (action == kRowBuy || action == kRowSell)
+                if (action == kRowBuy || action == kRowSell || action == kRowTest)
                 {
                     static ULONGLONG lastCase = 0;
                     if (GetTickCount64() - lastCase < 500) return;
                     lastCase = GetTickCount64();
-                    OpenCaseMenu(action == kRowBuy ? kCaseBuyMenu : kCaseSellMenu);
+                    if (action == kRowTest) OpenTestArsenal();
+                    else OpenCaseMenu(action == kRowBuy ? kCaseBuyMenu : kCaseSellMenu);
                 }
                 else if (action >= 0 && action != position)
                     sprintf_s(reinterpret_cast<char*>(manager + 0x1062c), 12, "aMAIN_S%d", action); // the row's own label (12: the game's strncpy size)
@@ -2982,6 +3049,8 @@ namespace pdnet::gamepatches
             if (v.lobbyName[s][0]) teamOf[v.lobbyName[s]] = v.team[s];
         return true;
     }
+
+    bool TestBattle() { return g_testBattle; }
 
     // Mind Reading is status effect 0x25. The game's voice rule (FUN_1400c61f0, run for each received voice buffer) plays
     // a buffer when the chat manager (*(DAT_1404bbc48 + 0x18)) has +0xac set or the sender's channel equals +0xa8 (the

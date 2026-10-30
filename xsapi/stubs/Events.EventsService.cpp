@@ -22,8 +22,9 @@ namespace winrt::Microsoft::Xbox::Services::Events::implementation
                 if (seen.insert(std::wstring{ eventName }).second) ::pdnet::Log(L"xsapi-pdnet: game event %s (first time)", eventName.c_str());
             }
             if (eventName != L"BattleRoyaleWin" && eventName != L"TagTeamWin" && eventName != L"OneOnOneWin") return false;
-            bool online = ::pdnet::gamepatches::MultiplayerProfile();
-            ::pdnet::Log(L"xsapi-pdnet: win event %s%s", eventName.c_str(), online ? L"" : L" (story profile: not counted)");
+            bool test = ::pdnet::gamepatches::TestBattle();
+            bool online = ::pdnet::gamepatches::MultiplayerProfile() && !test;
+            ::pdnet::Log(L"xsapi-pdnet: win event %s%s", eventName.c_str(), test ? L" (Test Arsenal: not counted)" : online ? L"" : L" (story profile: not counted)");
             if (online)
             {
                 ::pdnet::scores::AddWin(winrt::to_string(eventName));

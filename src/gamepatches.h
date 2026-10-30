@@ -35,6 +35,8 @@ namespace pdnet::gamepatches
     // True while this PC's player has Mind Reading ("listen in on target team's conversation"): the team channels
     // then let the other team be heard too, as the game's own voice rule did.
     bool MindReading();
+    // True from Lab > Test Arsenal until back in the menus: its battle's wins don't count for the scoreboard.
+    bool TestBattle();
 
     // The multiplayer rating as kept in the save (progress.dat; 0x1405b1370), or -1 before the save is loaded.
     int SavedRating();

@@ -237,6 +237,29 @@ namespace pdnet::gamepatches
             Log(L"gamepatch: nametags on dead bodies installed (now %s)", g_bodyTags ? L"on" : L"off");
             return true;
         }
+
+        // Nametags are always shown in a match. The battle HUD (DAT_1404bec00) has a "names hidden" switch at +0x5c: the
+        // match starts with it at 1 (FUN_140150130), a button (pad bit 9) flips it (FUN_140150640), and FUN_140150c30
+        // skips every nametag while it is 1:   cmp dword ptr [r14+0x5c],1 / jz skip   (jz at 0x140151165)
+        // The jz is removed, and the button's store (mov [rbx+0x5c],eax at 0x140150767) becomes nops, so it does nothing.
+        void NametagsAlwaysOn()
+        {
+            const std::vector<uint8_t> skip = { 0x0f, 0x84, 0xe3, 0x01, 0x00, 0x00 };
+            const std::vector<uint8_t> toggle = { 0x89, 0x43, 0x5c };
+            uint8_t* skipSite = At(0x140151165);
+            uint8_t* toggleSite = At(0x140150767);
+            if (memcmp(skipSite, skip.data(), skip.size()) != 0 || memcmp(toggleSite, toggle.data(), toggle.size()) != 0)
+            {
+                Log(L"gamepatch: nametags always on skipped - the game code is not what this pdnet expects");
+                return;
+            }
+            if (!Write(skipSite, std::vector<uint8_t>(skip.size(), 0x90)) || !Write(toggleSite, std::vector<uint8_t>(toggle.size(), 0x90)))
+            {
+                Log(L"gamepatch: nametags always on failed (VirtualProtect error %lu)", GetLastError());
+                return;
+            }
+            Log(L"gamepatch: nametags always on (the nametag button does nothing)");
+        }
     }
 
     namespace
@@ -2723,6 +2746,7 @@ namespace pdnet::gamepatches
         {
             if (!HookFileOpens()) Log(L"gamepatch: title screen: CreateFile2 import not found");
             g_bodyTags = GetConfig().nametagsOnBodies ? 1 : 0;
+            NametagsAlwaysOn();
             if (NametagsOnBodies())
             {
                 DeadNametagColor(GetConfig().deadNametagColor);

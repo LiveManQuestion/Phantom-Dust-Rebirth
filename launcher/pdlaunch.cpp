@@ -711,7 +711,7 @@ namespace
     // secret-free "pdnet-update-<build>.zip" (no eos.ini, no Discord links) and the line
     // "sha256 pdnet-update-<build>.zip <hex>" in its notes. At game start, before pdnet is injected, CheckForUpdate
     // looks for a higher build on this kit's channel (update_channel=stable|experimental|off; by default the kit's own
-    // kind, and off for development builds), downloads it into pdnet\update\ (inside the kit folder, so the files get
+    // kind, and off for development builds; an Experimental kit on the stable channel goes back to the newest Stable), downloads it into pdnet\update\ (inside the kit folder, so the files get
     // the folder's read access for the game's sandbox), checks the hash, backs up what it replaces in
     // pdnet\update\backup\ and swaps the files in. eos.ini and pdnet.ini are never touched. A pdnet.dll that doesn't
     // match kit-version.txt (a test build installed by hand) is left alone too.
@@ -857,6 +857,7 @@ namespace
         // Releases come newest first; in each, "prerelease" comes before its assets. The highest build on the channel wins.
         int best = 0;
         std::string bestUrl;
+        size_t bestAt = 0; // where its URL is: its release's notes (with the sha256 line) come after it
         bool pre = false;
         for (size_t at = 0;;)
         {
@@ -875,15 +876,24 @@ namespace
             size_t name = url.rfind("/pdnet-update-");
             if (name == std::string::npos || (pre && !experimental)) continue;
             int build = atoi(url.c_str() + name + 14);
-            if (build > best) { best = build; bestUrl = url; }
+            if (build > best) { best = build; bestUrl = url; bestAt = q2; }
         }
-        if (best <= kit.build)
+        // On the stable channel a kit that isn't a Stable (an Experimental, after Options > Updates was switched back)
+        // goes to the newest Stable, even though its build number is lower.
+        bool revert = !experimental && kit.label.find("Stable") == std::string::npos;
+        if (revert && best == 0)
+        {
+            Log(L"update: stable channel, but no Stable build is published yet - keeping build %d", kit.build);
+            return;
+        }
+        if (revert ? best == kit.build : best <= kit.build)
         {
             Log(L"update: up to date (build %d, %s channel)", kit.build, experimental ? L"experimental" : L"stable");
             return;
         }
         std::string asset = "pdnet-update-" + std::to_string(best) + ".zip";
-        size_t s = json.find("sha256 " + asset + " ");
+        // From the same release: a Stable's asset has the same name as its Experimental's, with another kit-version.txt.
+        size_t s = json.find("sha256 " + asset + " ", bestAt);
         std::string expected = s == std::string::npos ? std::string() : json.substr(s + 8 + asset.size(), 64);
         if (expected.size() != 64)
         {
@@ -891,7 +901,8 @@ namespace
             return;
         }
 
-        Log(L"update: build %d available (this kit is build %d) - downloading", best, kit.build);
+        if (revert) Log(L"update: stable channel - going back to Stable build %d (this kit is %S, build %d) - downloading", best, kit.label.c_str(), kit.build);
+        else Log(L"update: build %d available (this kit is build %d) - downloading", best, kit.build);
         URL_COMPONENTS parts{ sizeof(parts) };
         wchar_t host[256], path[2048];
         parts.lpszHostName = host; parts.dwHostNameLength = _countof(host);

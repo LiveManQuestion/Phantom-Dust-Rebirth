@@ -2257,6 +2257,13 @@ namespace pdnet::gamepatches
         void OpenCaseMenu(int menu)
         {
             Log(L"gamepatch: Arsenal Lab: %s Arsenal Case picked", menu == kCaseBuyMenu ? L"Buy" : L"Sell");
+            // The case screens only show the shop's stock, which the shop builds as it opens: the multiplayer menu sets
+            // menu variable 2 to 768 and the shop's InitMenu then calls g3 #310 = FUN_1401ce100 (copies the multiplayer
+            // prices from the loaded data at *0x1404c5228 + 0x33c04 and builds the stock lists). Without it the buy
+            // screen had no cases (Experimental 83).
+            if (*reinterpret_cast<uint64_t*>(At(0x1404c5228)) && memcmp(At(0x1401ce100), "\x48\x83\xec\x28\x48\x8b\x05", 7) == 0)
+                reinterpret_cast<void (*)()>(At(0x1401ce100))();
+            else Log(L"gamepatch: Arsenal Lab: shop stock not built - the game code or data is not what this pdnet expects");
             int64_t manager = MenuManager();
             *At(0x1404bbc34) = 0; // as FUN_140207020 (the script's "open menu")
             g_pushMenu(manager, menu, 0);

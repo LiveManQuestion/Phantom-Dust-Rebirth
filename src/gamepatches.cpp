@@ -2166,6 +2166,35 @@ namespace pdnet::gamepatches
         std::atomic<bool> g_sendingLog{ false };
         bool g_logItemReady = false; // menu command 6 is wrapped (SoundOptions)
 
+        // Options > Updates: an eighth item, after Send Log, picked the same way (event 107, "aMAIN_S7"). It switches
+        // update_channel between stable and experimental in settings.ini, which pdlaunch reads at the next game start
+        // (CheckForUpdate; settings.ini overrides pdnet.ini). Empty means the kit's own kind (off for a development build).
+        char g_updateRowText[64];
+        const char* kUpdateHint = "Builds to update to at game start. Stable: tested. Experimental: newest, less tested.";
+
+        std::wstring UpdateChannel()
+        {
+            std::wstring channel = GetConfig().updateChannel;
+            if (!channel.empty()) return channel;
+            std::string label = BuildLabel();
+            return label.find("Experimental") != std::string::npos ? L"experimental" : label.find("Stable") != std::string::npos ? L"stable" : L"off";
+        }
+
+        void RefreshUpdateRow()
+        {
+            std::wstring channel = UpdateChannel();
+            sprintf_s(g_updateRowText, "Updates: %s", _wcsicmp(channel.c_str(), L"experimental") == 0 ? "Experimental" : _wcsicmp(channel.c_str(), L"off") == 0 ? "Off" : "Stable");
+        }
+
+        void SwitchUpdates()
+        {
+            std::wstring next = _wcsicmp(UpdateChannel().c_str(), L"stable") == 0 ? L"experimental" : L"stable"; // Off goes to Stable
+            EditableConfig().updateChannel = next;
+            SaveSetting("update_channel", winrt::to_string(next));
+            RefreshUpdateRow();
+            Log(L"gamepatch: Options > Updates: %s (used from the next game start)", next.c_str());
+        }
+
         bool LogItems(const char* added, int64_t* args, int64_t& result)
         {
             // Only the Options scripts add $KEYBOARD items. No menu check: the list is built before menu 4 is current.
@@ -2173,9 +2202,12 @@ namespace pdnet::gamepatches
             bool row = strcmp(added, "$KEYBOARD") == 0, hint = strcmp(added, "$KEYBOARD_HINT") == 0;
             if (!row && !hint) return false;
             result = g_addItem(args);
+            RefreshUpdateRow();
             int64_t item[8] = { reinterpret_cast<int64_t>(row ? g_logRowText : kLogHint) };
             g_addItem(item);
-            if (row) Log(L"gamepatch: Options > Send Log item added");
+            int64_t updates[8] = { reinterpret_cast<int64_t>(row ? g_updateRowText : kUpdateHint) };
+            g_addItem(updates);
+            if (row) Log(L"gamepatch: Options > Send Log and Updates items added");
             return true;
         }
 
@@ -2201,13 +2233,15 @@ namespace pdnet::gamepatches
         void CheckSendLogPick(int32_t event)
         {
             int64_t manager = MenuManager();
-            if (event != 106 || !manager || CurrentMenu(manager) != kOptionsMenu) return;
+            if ((event != 106 && event != 107) || !manager || CurrentMenu(manager) != kOptionsMenu) return;
             char label[16];
-            if (!CopyString(reinterpret_cast<const char*>(manager + 0x1062c), label, sizeof(label)) || _stricmp(label, "aMAIN_S6") != 0) return;
-            static ULONGLONG last = 0;
-            if (GetTickCount64() - last < 3000) return;
-            last = GetTickCount64();
-            SendLog();
+            if (!CopyString(reinterpret_cast<const char*>(manager + 0x1062c), label, sizeof(label)) || _stricmp(label, event == 106 ? "aMAIN_S6" : "aMAIN_S7") != 0) return;
+            static ULONGLONG last[2] = {};
+            ULONGLONG& at = last[event - 106];
+            if (GetTickCount64() - at < (event == 106 ? 3000u : 300u)) return;
+            at = GetTickCount64();
+            if (event == 106) SendLog();
+            else SwitchUpdates();
         }
 
         MenuCommandFn g_getOption = nullptr, g_setOption = nullptr, g_setState = nullptr, g_setState12 = nullptr;

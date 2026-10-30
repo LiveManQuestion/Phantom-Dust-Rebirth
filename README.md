@@ -2,7 +2,7 @@
 
 Online play for the 2017 Windows version of Phantom Dust, now that Xbox Live matchmaking is gone. pdnet stands in for
 the game's Xbox Live library and runs lobbies, matches, voice chat and scoreboards over Epic Online Services. It also
-adds a few fixes and features (see `HANDOFF.md`). The game files themselves are never changed: a small launcher loads
+adds a few fixes and features (see [`docs/HANDOFF.md`](docs/HANDOFF.md)). The game files themselves are never changed: a small launcher loads
 pdnet when the game starts.
 
 ## Building
@@ -77,6 +77,5 @@ lists what it needs (xwin's Windows SDK, a C++/WinRT projection, Epic's SDK). Co
 | `kit\` | everything in a kit besides the built files: `Setup.bat`, the scripts, `README.txt`, `pdnet.ini` |
 | `deps\` | SDL3 (controllers, in the repository) and Epic's SDK (you add it) |
 | `build-linux.sh` | the Linux build (see above) |
-| `tools\` | `build.ps1` (what `build.bat` runs), `rebirth-word\` (the title lettering), `old\` (earlier scripts and test kits) |
-| `docs\` | early planning notes |
-| `HANDOFF.md` | the full development log: how everything works and why |
+| `tools\` | `build.ps1` (what `build.bat` runs), `kit-counter.txt` (the last Experimental number), `rebirth-word\` (the title lettering) |
+| `docs\` | `HANDOFF.md`, the full development log (how everything works and why), and the early planning notes |

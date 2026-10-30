@@ -2,9 +2,10 @@
 
 Written 2026-10-17 by the first Claude Code session, updated by a second session (source repair and test peer),
 and updated again on 2026-10-18 and 2026-10-19 (EOS, Xbox-free mode). See Â§10 and `git log` in `_netmod`.
-Read next: [`docs/EOS_PLAN.md`](docs/EOS_PLAN.md) (the current direction, with detailed progress) and [`docs/MODDING_PLAN.md`](docs/MODDING_PLAN.md) (original design and research).
+Read next: [`EOS_PLAN.md`](EOS_PLAN.md) (the current direction, with detailed progress) and [`MODDING_PLAN.md`](MODDING_PLAN.md) (original design and research).
 
 **Repository layout and building (from 2026-10-30; older notes below use the old paths).** The user couldn't build a Windows SDK 10.0.22000.0 is required: `xsapigen` was made by its C++/WinRT (2.0.210806.1), and on a PC with only SDK 10.0.26100 the build failed with "Mismatched C++/WinRT headers"; build.ps1 checks for it and offers to open Microsoft's standalone installer (Windows SDK 10.0.22000.194, https://go.microsoft.com/fwlink/?linkid=2173743, from the SDK archive page): current Visual Studio 2022 (17.14) no longer has it as a component. A download of the repository as a ZIP (no .git, or no git installed) builds too: the kit's Source line then says "unknown (not built from a git clone)" (before, Windows PowerShell treated git's "not a git repository" as a fatal error).
+**Repository cleanup (2026-10-31).** This log moved to `docsHANDOFF.md` (the top of the repository is README.md, build.bat, build-linux.sh and the folders). `toolsold` was removed (the old build.cmd / build-pdlaunch.cmd / make-testkit.ps1, lobbytool, the stage A-C test kits, early dev scripts); find them in git history before commit "Clean up the repository" follow-ups, or at tag stable-9. The kit27 branch was deleted; its last commit is tag `kit27-final`.
 fresh clone (it needed Python, files from the game install and folders on the developer's PC), so the repository was
 reorganised. Old path -> new path: `pdnet\src` -> `src\`, `pdnet\xsapi` -> `xsapi\` (with `gen\` now committed, so
 `generate.py` never has to run), `pdnet\tools\pdlaunch.cpp` -> `launcher\`, `testkit-store\` -> `kit\` (Setup.bat at

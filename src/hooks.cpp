@@ -167,6 +167,24 @@ namespace pdnet
         }
     }
 
+    namespace
+    {
+        // A module listed by K32EnumProcessModules can be unloaded by another thread before PatchModule reads its
+        // headers (a crash at game start, 2026-10-30): `gone` is then set and nothing is patched.
+        bool TryPatchModule(HMODULE module, bool& gone)
+        {
+            __try
+            {
+                return PatchModule(module);
+            }
+            __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH)
+            {
+                gone = true;
+                return false;
+            }
+        }
+    }
+
     void SetFirstXboxActivationHandler(void (*handler)()) { g_firstXbox = handler; }
     bool FirstXboxActivationSeen() { return g_firstXboxSeen; }
 
@@ -199,9 +217,10 @@ namespace pdnet
             }
             // Injected mode patches modules again on every pass: a module found before the loader filled in its
             // imports gets our hook overwritten by the real address. PatchModule only writes when the slot differs.
-            if (!PatchModule(m))
+            bool gone = false;
+            if (!TryPatchModule(m, gone))
             {
-                checked.insert(m);
+                if (!gone) checked.insert(m); // an unloaded module's address may hold another module later
             }
             else if (patched.insert(m).second)
             {

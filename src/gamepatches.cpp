@@ -1281,6 +1281,18 @@ namespace pdnet::gamepatches
             { "Display the Options menu.", "Your name, nametags, start-up volume and Discord posts." },
         };
 
+        // Main menu > Multiplayer: the Online Store item (Xbox store, deprecated) is left out. It is the last item, after
+        // Split Screen, so the other items keep their numbers; the shop's own $STORE item is not touched.
+        // The multiplayer menu's Trade (after Create Match; the trade screens say "Trade" too) reads Theater for now.
+        struct ItemAfter { const char* previous; const char* find; const char* replace; }; // replace nullptr: left out
+        constexpr ItemAfter kItemsAfter[] = {
+            { "Split Screen", "$STORE", nullptr },
+            { "Battle another player using split screen.", "$STORE_HINT", nullptr },
+            { "Create Match", "Trade", "Theater" },
+            { "Create a new game session.", "Trade a skill.", "Coming soon." },
+        };
+        char g_lastItem[80]; // the text of the item added before (the menu's own text, before any renaming)
+
         bool SettingsItems(const char* added); // the in-game Settings rows (below)
         bool SoundItems(const char* added, int64_t* args, int64_t& result); // the Options > Sound rows (below)
         bool LogItems(const char* added, int64_t* args, int64_t& result);   // Options > Send Log (below)
@@ -1294,6 +1306,18 @@ namespace pdnet::gamepatches
                 {
                     // Only the scoreboard menu adds $LEADERBOARD_ items.
                     if (GetConfig().scoreboard && strncmp(text, "$LEADERBOARD_", 13) == 0 && atoi(text + 13) % 3 != 0) return 0; // Friends / Favorites
+                    char previous[80];
+                    memcpy(previous, g_lastItem, sizeof(previous));
+                    memcpy(g_lastItem, text, sizeof(g_lastItem));
+                    for (auto& item : kItemsAfter)
+                        if (strcmp(text, item.find) == 0 && strcmp(previous, item.previous) == 0)
+                        {
+                            if (!item.replace) return 0;
+                            int64_t renamed[8];
+                            memcpy(renamed, args, sizeof(renamed));
+                            renamed[0] = reinterpret_cast<int64_t>(item.replace);
+                            return g_addItem(renamed);
+                        }
                     for (auto& item : kMenuItems)
                         if (strcmp(text, item.find) == 0)
                         {

@@ -600,11 +600,14 @@ namespace pdnet::gamepatches
         // The game's menus are scripts on a stack (manager = DAT_140533c58, current menu index at +0x105f4):
         //   FUN_140246130(manager, menu, force) opens `menu` on top (saves the current one and its state),
         //   FUN_1402461f0() closes the top one and re-opens the saved one.
-        // Menu indexes (table DAT_1403fa3d0, 0x18 per entry): livelobby 44, laboratory 45, labostock 63, arsenaledit 64.
-        // Lobby Arsenal editor: the lobby's invite button (pdnet's ShowGameInviteUIAsync) opens arsenaledit on top
-        // of livelobby; while it is open from there, its exit to another menu (normally the Laboratory) becomes a
-        // "back", so it returns to the lobby with the lobby's state restored, like the lobby's own Change Arsenal.
-        constexpr int kLobbyMenu = 44, kStockMenu = 63, kEditorMenu = 64;
+        // Menu indexes (table DAT_1403fa3d0, 0x18 per entry): arsenalbuy 30, arsenalsell 31, livelobby 44,
+        // laboratory 45, labostock 63, arsenaledit 64. The stack nests: 36 -> 45 -> 64, back, back.
+        // Lobby Arsenal Lab: the lobby's invite button (pdnet's ShowGameInviteUIAsync) opens the Laboratory on top of
+        // livelobby (it opened arsenaledit directly until 2026-10-29; the Laboratory has Buy / Sell Arsenal Case now).
+        // While it is open from there, leaving the Laboratory's menus for any other menu becomes a "back", so it returns
+        // to the lobby with the lobby's state restored, like the lobby's own Change Arsenal.
+        constexpr int kLobbyMenu = 44, kLabMenu = 45, kStockMenu = 63, kEditorMenu = 64, kCaseBuyMenu = 30, kCaseSellMenu = 31;
+        bool InLabMenus(int menu) { return menu == kLabMenu || menu == kStockMenu || menu == kEditorMenu || menu == kCaseBuyMenu || menu == kCaseSellMenu; }
         using PushMenuFn = int (*)(int64_t manager, int menu, char force);
         using PopMenuFn = int (*)();
         PushMenuFn g_pushMenu = nullptr; // the original functions (trampolines)
@@ -798,15 +801,15 @@ namespace pdnet::gamepatches
             if (menu == 68) g_settingsOpenedAt = GetTickCount64();
             RenameStrings(); // cheap; covers string tables loaded after start-up
             if (menu != current) Log(L"menu: open %d (from %d)", menu, current);
-            if (g_editorFromLobby && current == kEditorMenu && menu != kEditorMenu && menu != kStockMenu)
+            if (g_editorFromLobby && InLabMenus(current) && !InLabMenus(menu))
             {
                 g_editorFromLobby = false;
                 if (g_lobbyEndedInEditor.exchange(false))
                 {
-                    Log(L"menu: leaving the Arsenal editor - the lobby ended meanwhile, so out the lobby's way (menu %d)", kLobbyLostMenu);
+                    Log(L"menu: leaving the Arsenal Lab - the lobby ended meanwhile, so out the lobby's way (menu %d)", kLobbyLostMenu);
                     return g_pushMenu(manager, kLobbyLostMenu, force);
                 }
-                Log(L"menu: leaving the Arsenal editor opened from the lobby - back to the lobby instead of menu %d", menu);
+                Log(L"menu: leaving the Arsenal Lab opened from the lobby - back to the lobby instead of menu %d", menu);
                 int result = g_popMenu();
                 SetLobbyAvailable(true);
                 return result;
@@ -819,11 +822,11 @@ namespace pdnet::gamepatches
             int64_t manager = MenuManager();
             int current = CurrentMenu(manager);
             Log(L"menu: back (from %d)", current);
-            if (current == kEditorMenu && g_editorFromLobby.exchange(false))
+            if (current == kLabMenu && g_editorFromLobby.exchange(false)) // the Laboratory's back: the lobby is under it
             {
                 if (g_lobbyEndedInEditor.exchange(false))
                 {
-                    Log(L"menu: leaving the Arsenal editor - the lobby ended meanwhile, so out the lobby's way (menu %d)", kLobbyLostMenu);
+                    Log(L"menu: leaving the Arsenal Lab - the lobby ended meanwhile, so out the lobby's way (menu %d)", kLobbyLostMenu);
                     return g_pushMenu(manager, kLobbyLostMenu, 0);
                 }
                 int result = g_popMenu();
@@ -1296,6 +1299,7 @@ namespace pdnet::gamepatches
         bool SettingsItems(const char* added); // the in-game Settings rows (below)
         bool SoundItems(const char* added, int64_t* args, int64_t& result); // the Options > Sound rows (below)
         bool LogItems(const char* added, int64_t* args, int64_t& result);   // Options > Send Log (below)
+        bool CaseItems(const char* added, int64_t* args, int64_t& result);  // Arsenal Lab > Buy / Sell Arsenal Case (below)
 
         int64_t HookedAddItem(int64_t* args)
         {
@@ -1329,6 +1333,7 @@ namespace pdnet::gamepatches
                     if (SettingsItems(text)) return 0; // replaced by the in-game Settings rows
                     if (int64_t result = 0; SoundItems(text, args, result)) return result; // followed by the Options > Sound rows
                     if (int64_t result = 0; LogItems(text, args, result)) return result;   // followed by Send Log
+                    if (int64_t result = 0; CaseItems(text, args, result)) return result;  // followed by Buy / Sell Arsenal Case
                     return g_addItem(args);
                 }
             }
@@ -2195,6 +2200,35 @@ namespace pdnet::gamepatches
             Log(L"gamepatch: Options > Updates: %s (used from the next game start)", next.c_str());
         }
 
+        // Laboratory (menu 45, also opened from the lobby): Buy Arsenal Case and Sell Arsenal Case after View Tutorial
+        // Movie, with the shop's hints. Its script state is "MAIN" too, so picking them is event 103 / 104 with the
+        // missing labels aMAIN_S3 / aMAIN_S4 (CheckSendLogPick); pdnet then opens arsenalbuy (30) / arsenalsell (31) on
+        // top the way the script's "open menu" does, and their back returns to the Laboratory, as it does to the shop.
+        const char* kCaseItems[2] = { "Buy Arsenal Case", "Sell Arsenal Case" };
+        const char* kCaseHints[2] = { "Buy an arsenal case.\nA case is necessary to create a new arsenal.", "Sell arsenal cases that you don't need." };
+
+        bool CaseItems(const char* added, int64_t* args, int64_t& result)
+        {
+            if (!g_logItemReady || !g_pushMenu) return false; // no items that can't work
+            bool row = strcmp(added, "View Tutorial Movie") == 0, hint = strcmp(added, "See a tutorial movie about arsenals.") == 0;
+            if (!row && !hint) return false;
+            result = g_addItem(args);
+            for (int i = 0; i < 2; ++i)
+            {
+                int64_t item[8] = { reinterpret_cast<int64_t>(row ? kCaseItems[i] : kCaseHints[i]) };
+                g_addItem(item);
+            }
+            if (row) Log(L"gamepatch: Arsenal Lab: Buy / Sell Arsenal Case items added");
+            return true;
+        }
+
+        void OpenCaseMenu(int menu)
+        {
+            Log(L"gamepatch: Arsenal Lab: %s Arsenal Case picked", menu == kCaseBuyMenu ? L"Buy" : L"Sell");
+            *At(0x1404bbc34) = 0; // as FUN_140207020 (the script's "open menu")
+            g_pushMenu(MenuManager(), menu, 0);
+        }
+
         bool LogItems(const char* added, int64_t* args, int64_t& result)
         {
             // Only the Options scripts add $KEYBOARD items. No menu check: the list is built before menu 4 is current.
@@ -2233,6 +2267,18 @@ namespace pdnet::gamepatches
         void CheckSendLogPick(int32_t event)
         {
             int64_t manager = MenuManager();
+            if ((event == 103 || event == 104) && manager && CurrentMenu(manager) == kLabMenu && g_pushMenu)
+            {
+                char label[16];
+                static ULONGLONG lastCase = 0;
+                if (CopyString(reinterpret_cast<const char*>(manager + 0x1062c), label, sizeof(label)) && _stricmp(label, event == 103 ? "aMAIN_S3" : "aMAIN_S4") == 0 &&
+                    GetTickCount64() - lastCase >= 500)
+                {
+                    lastCase = GetTickCount64();
+                    OpenCaseMenu(event == 103 ? kCaseBuyMenu : kCaseSellMenu);
+                }
+                return;
+            }
             if ((event != 106 && event != 107) || !manager || CurrentMenu(manager) != kOptionsMenu) return;
             char label[16];
             if (!CopyString(reinterpret_cast<const char*>(manager + 0x1062c), label, sizeof(label)) || _stricmp(label, event == 106 ? "aMAIN_S6" : "aMAIN_S7") != 0) return;
@@ -2568,12 +2614,12 @@ namespace pdnet::gamepatches
         int64_t manager = MenuManager();
         int current = CurrentMenu(manager);
         if (!g_pushMenu || current != kLobbyMenu) return false;
-        Log(L"menu: invite button in the lobby - opening the Arsenal editor (red hand on until back in the lobby)");
+        Log(L"menu: invite button in the lobby - opening the Arsenal Lab (red hand on until back in the lobby)");
         g_editorFromLobby = true;
         g_lobbyEndedInEditor = false;
-        SetLobbyAvailable(false); // like the lobby's own menus: the match can't start while this player is in the editor
-        *At(0x1404bbc34) = 0; // as the script's own "open menu" command does
-        g_pushMenu(manager, kEditorMenu, 0);
+        SetLobbyAvailable(false); // like the lobby's own menus: the match can't start while this player is in the Lab
+        *At(0x1404bbc34) = 0; // as the script's own "open menu" command does (FUN_140207020)
+        g_pushMenu(manager, kLabMenu, 0);
         return true;
     }
 

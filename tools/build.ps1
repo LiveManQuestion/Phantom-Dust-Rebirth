@@ -47,6 +47,61 @@ function Zip([string]$folder, [string]$zipPath) {
     finally { $archive.Dispose() }
 }
 
+# ---- updates: GitHub Releases ----------------------------------------------------------------------------------------
+# Players' pdlaunch updates itself from this repository's releases (launcher\pdlaunch.cpp, CheckForUpdate): each
+# Experimental is a pre-release "build-<N>", each Stable a release "stable-<M>", with the asset pdnet-update-<N>.zip
+# (the kit without eos.ini and without the Discord links) and the line "sha256 pdnet-update-<N>.zip <hex>" in its
+# notes. <N> is the build number: the Experimental number, which a Stable keeps. Publishing needs a GitHub token in
+# private\github-token.txt (a fine-grained token for this repository with "Contents: Read and write").
+
+# The kit folder `from` as a secret-free update zip at `to`.
+function UpdateZip([string]$from, [string]$to) {
+    $tmp = Join-Path $out 'update-kit'
+    if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
+    Copy-Item $from $tmp -Recurse
+    Remove-Item (Join-Path $tmp 'pdnet\eos.ini') -ErrorAction SilentlyContinue
+    $iniPath = Join-Path $tmp 'pdnet\pdnet.ini'
+    $text = Get-Content $iniPath -Raw -Encoding UTF8
+    foreach ($key in 'discord_webhook', 'log_webhook', 'discord_invite') { $text = $text -replace "(?m)^$key=.*$", "$key=" }
+    Set-Content $iniPath $text -Encoding UTF8 -NoNewline
+    Zip $tmp $to
+    Remove-Item $tmp -Recurse -Force
+}
+
+# owner/name of the GitHub repository (from the git remote; this one if there is none).
+function RepoSlug {
+    $url = $null
+    if (Get-Command git -ErrorAction SilentlyContinue) { $ErrorActionPreference = 'Continue'; $url = git -C $root remote get-url origin 2>$null; $ErrorActionPreference = 'Stop' }
+    if ($url -match 'github\.com[:/](.+?)(\.git)?$') { $Matches[1] } else { 'SnowRyze/Phantom-Dust-Rebirth' }
+}
+
+# Creates a GitHub release with one asset; returns its web page, or $null (with the reason printed) if it didn't happen.
+function PublishRelease([string]$tag, [string]$target, [string]$title, [bool]$prerelease, [string]$notes, [string]$assetPath) {
+    $tokenFile = Join-Path $root 'private\github-token.txt'
+    if (-not (Test-Path $tokenFile)) { Write-Host "Not published to GitHub: no private\github-token.txt (see README, Publishing updates)." -ForegroundColor Yellow; return $null }
+    $headers = @{ Authorization = "Bearer $((Get-Content $tokenFile -Raw).Trim())"; Accept = 'application/vnd.github+json'; 'User-Agent' = 'pdnet-build' }
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $repo = RepoSlug
+    try {
+        $body = @{ tag_name = $tag; name = $title; body = $notes; prerelease = $prerelease }
+        if ($target) { $body.target_commitish = $target }
+        $release = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$repo/releases" -Headers $headers -Body ($body | ConvertTo-Json) -ContentType 'application/json'
+        $upload = ($release.upload_url -replace '\{.*$', '') + '?name=' + [Uri]::EscapeDataString((Split-Path $assetPath -Leaf))
+        Invoke-RestMethod -Method Post -Uri $upload -Headers $headers -InFile $assetPath -ContentType 'application/zip' | Out-Null
+        return $release.html_url
+    }
+    catch {
+        $detail = $_.ErrorDetails.Message; if (-not $detail) { $detail = $_.Exception.Message }
+        Write-Host "Not published to GitHub ($repo): $detail" -ForegroundColor Yellow
+        return $null
+    }
+}
+
+function ReleaseNotes([int]$build, [string]$assetPath, [string]$text) {
+    $sha = (Get-FileHash $assetPath -Algorithm SHA256).Hash.ToLower()
+    "Build $build`r`n`r`n$text`r`n`r`nsha256 $(Split-Path $assetPath -Leaf) $sha`r`n`r`nInstalled kits update themselves at game start (pdnet\update_channel in pdnet.ini). This download has no eos.ini and no Discord links: a first install needs a kit from the testers' channel."
+}
+
 # ---- promote: only renames and tags, no build ----------------------------------------------------------------------
 if ($Mode -eq 'promote') {
     $n = [int]$Arg
@@ -67,9 +122,23 @@ if ($Mode -eq 'promote') {
         $w.Write("$label`r`n" + (($lines | Select-Object -Skip 1) -join "`r`n")); $w.Dispose()
     }
     finally { $z.Dispose() }
+    $build = $lines | Where-Object { $_ -match '^Build: (\d+)' } | ForEach-Object { [int]$Matches[1] } | Select-Object -First 1
+    if (-not $build) { $build = $n } # kits from before the Build line: the build number is the Experimental number
     if ($source) { git -C $root tag -f "stable-$number" $source | Out-Null; Write-Host "git tag stable-$number -> $source (push it: git push origin stable-$number)" }
     else { Write-Host "No Source line in kit-version.txt: tag stable-$number by hand." -ForegroundColor Yellow }
     Write-Host "Experimental $n is now $to"
+
+    # The Stable as a GitHub release, so players on the stable channel get it.
+    $unpacked = Join-Path $out 'promote-kit'
+    if (Test-Path $unpacked) { Remove-Item $unpacked -Recurse -Force }
+    [IO.Compression.ZipFile]::ExtractToDirectory($to, $unpacked)
+    $asset = Join-Path $out "pdnet-update-$build.zip"
+    UpdateZip $unpacked $asset
+    Remove-Item $unpacked -Recurse -Force
+    $fullSource = $null
+    if ($source) { $ErrorActionPreference = 'Continue'; $fullSource = git -C $root rev-parse $source 2>$null; $ErrorActionPreference = 'Stop' } # GitHub wants the full hash
+    $page = PublishRelease "stable-$number" $fullSource "Stable $number" $false (ReleaseNotes $build $asset "Stable $number (Experimental $n).") $asset
+    if ($page) { Write-Host "Published: $page" -ForegroundColor Green }
     exit 0
 }
 if ($Mode -notin 'build', 'experimental') { Fail "Unknown argument '$Mode'. Use: build.bat [experimental `"notes`" | promote N]" }
@@ -194,7 +263,8 @@ $label = if ($Mode -eq 'experimental') {
     $number = [Math]::Max((LastNumber 'Experimental'), $(if (Test-Path $counterFile) { [int](Get-Content $counterFile -Raw).Trim() } else { 0 })) + 1
     "PhantomDust-pdnet Experimental $number"
 } else { 'PhantomDust-pdnet development build' }
-$version = "$label`r`npdnet.dll MD5 $md5`r`nSource: $(if ($commit) { $commit } else { 'unknown (not built from a git clone)' })$dirty`r`n" + $(if ($Mode -eq 'experimental' -and $Arg) { "$Arg`r`n" } else { '' })
+$version = "$label`r`npdnet.dll MD5 $md5`r`n" + $(if ($Mode -eq 'experimental') { "Build: $number`r`n" } else { '' }) +
+           "Source: $(if ($commit) { $commit } else { 'unknown (not built from a git clone)' })$dirty`r`n" + $(if ($Mode -eq 'experimental' -and $Arg) { "$Arg`r`n" } else { '' })
 [IO.File]::WriteAllText((Join-Path $files 'kit-version.txt'), $version, (New-Object Text.UTF8Encoding $false))
 Zip $kit (Join-Path $out 'PhantomDust-pdnet.zip')
 
@@ -211,4 +281,24 @@ if ($Mode -eq 'experimental') {
     Set-Content $counterFile $number
     Write-Host "  $zip" -ForegroundColor Green
     Write-Host 'The kit has eos.ini and the Discord links inside: share it only with your testers.' -ForegroundColor Yellow
+
+    # The update for installed kits on the experimental channel: a GitHub pre-release of the commit it was built from,
+    # which has to be on GitHub already (push first).
+    $asset = Join-Path $out "pdnet-update-$number.zip"
+    UpdateZip $kit $asset
+    $fullCommit = $null; $pushed = $false
+    if ($commit) {
+        $ErrorActionPreference = 'Continue'
+        $fullCommit = git -C $root rev-parse HEAD 2>$null
+        git -C $root fetch -q origin 2>$null
+        $pushed = [bool](git -C $root branch -r --contains $fullCommit 2>$null)
+        $ErrorActionPreference = 'Stop'
+    }
+    if (-not $fullCommit) { Write-Host 'Not published to GitHub: not a git clone.' -ForegroundColor Yellow }
+    elseif ($dirty) { Write-Host 'Not published to GitHub: commit the changes first (an update must match a commit).' -ForegroundColor Yellow }
+    elseif (-not $pushed) { Write-Host 'Not published to GitHub: push this commit first (git push), then run build.bat experimental again.' -ForegroundColor Yellow }
+    else {
+        $page = PublishRelease "build-$number" $fullCommit "Experimental $number" $true (ReleaseNotes $number $asset $(if ($Arg) { $Arg } else { "Experimental $number." })) $asset
+        if ($page) { Write-Host "Published: $page" -ForegroundColor Green }
+    }
 }

@@ -38,6 +38,24 @@ For online play the kit also needs the EOS client settings and, optionally, the 
 
 Without them `build.bat` still builds and says what is missing.
 
+### Updates
+
+Installed kits update themselves: at game start `pdlaunch.exe` looks at this repository's GitHub Releases and, if
+there is a newer build on its channel, downloads and installs it before the game goes online. The player's `eos.ini`
+and `pdnet.ini` stay as they are. The channel is `update_channel=` in the kit's `pdnet.ini`: `stable`, `experimental`
+or `off`; empty means the kit's own kind. Its log is the `update:` lines in `pdnet\pdlaunch.log`.
+
+**Publishing updates.** `build.bat experimental "notes"` publishes the kit as a GitHub pre-release (`build-<N>`), and
+`build.bat promote <N>` publishes the Stable as a release (`stable-<M>`). Each carries `pdnet-update-<N>.zip`, the kit
+without `eos.ini` and without the Discord links. It needs, once, a GitHub token in `private\github-token.txt`:
+
+1. github.com > your picture > Settings > Developer settings > Personal access tokens > Fine-grained tokens >
+   Generate new token.
+2. Repository access: *Only select repositories*, this repository. Permissions: **Contents: Read and write**.
+3. Copy the token into `private\github-token.txt` (that folder is never in git).
+
+Commit and push before `build.bat experimental`: a release has to point at a commit that is on GitHub.
+
 ### Linux
 
 `build-linux.sh` builds pdnet.dll on Linux with clang-cl and lld-link, for running the game under wine-uwp. Its header

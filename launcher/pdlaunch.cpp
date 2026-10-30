@@ -22,8 +22,10 @@
 #include <vector>
 #include <SDL3/SDL.h>  // types only: SDL3.dll is loaded at run time (ReadControllers)
 #include "padshare.h"
+#include <bcrypt.h>
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "bcrypt.lib")
 
 namespace
 {
@@ -704,6 +706,263 @@ namespace
         Log(L"clock: %lld s %s Epic's%s", off, behind < 0 ? L"ahead of" : L"behind", off >= 60 ? L" - pdnet gives EOS the corrected time" : L"");
     }
 
+    // ---- Updates (from GitHub Releases) -------------------------------------------------------------------------------
+    // build.bat publishes every Experimental kit as a pre-release and every Stable as a release, each with a
+    // secret-free "pdnet-update-<build>.zip" (no eos.ini, no Discord links) and the line
+    // "sha256 pdnet-update-<build>.zip <hex>" in its notes. At game start, before pdnet is injected, CheckForUpdate
+    // looks for a higher build on this kit's channel (update_channel=stable|experimental|off; by default the kit's own
+    // kind, and off for development builds), downloads it into pdnet\update\ (inside the kit folder, so the files get
+    // the folder's read access for the game's sandbox), checks the hash, backs up what it replaces in
+    // pdnet\update\backup\ and swaps the files in. eos.ini and pdnet.ini are never touched. A pdnet.dll that doesn't
+    // match kit-version.txt (a test build installed by hand) is left alone too.
+
+    // GET https://<host><path> into `body`; false if it failed or wasn't 200.
+    bool HttpsGet(const wchar_t* host, const std::wstring& path, std::string& body, DWORD timeoutMs)
+    {
+        bool ok = false;
+        HINTERNET session = WinHttpOpen(L"pdlaunch-updater", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0);
+        if (session) WinHttpSetTimeouts(session, timeoutMs, timeoutMs, timeoutMs, timeoutMs);
+        HINTERNET connect = session ? WinHttpConnect(session, host, INTERNET_DEFAULT_HTTPS_PORT, 0) : nullptr;
+        HINTERNET request = connect ? WinHttpOpenRequest(connect, L"GET", path.c_str(), nullptr, nullptr, nullptr, WINHTTP_FLAG_SECURE) : nullptr;
+        if (request && WinHttpSendRequest(request, L"Accept: application/vnd.github+json\r\n", static_cast<DWORD>(-1), nullptr, 0, 0, 0) &&
+            WinHttpReceiveResponse(request, nullptr))
+        {
+            DWORD status = 0, size = sizeof(status);
+            WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, nullptr, &status, &size, nullptr);
+            char buf[65536];
+            for (DWORD got = 0; WinHttpReadData(request, buf, sizeof(buf), &got) && got;) body.append(buf, got);
+            ok = status == 200;
+        }
+        if (request) WinHttpCloseHandle(request);
+        if (connect) WinHttpCloseHandle(connect);
+        if (session) WinHttpCloseHandle(session);
+        return ok;
+    }
+
+    // Lowercase hex digest (BCRYPT_MD5_ALGORITHM / BCRYPT_SHA256_ALGORITHM) of some bytes; empty on failure.
+    std::string HashHex(LPCWSTR algorithm, const std::string& data)
+    {
+        BCRYPT_ALG_HANDLE alg = nullptr;
+        std::string hex;
+        if (BCryptOpenAlgorithmProvider(&alg, algorithm, nullptr, 0) != 0) return hex;
+        DWORD length = 0, got = 0;
+        BCryptGetProperty(alg, BCRYPT_HASH_LENGTH, reinterpret_cast<PUCHAR>(&length), sizeof(length), &got, 0);
+        std::vector<UCHAR> digest(length);
+        if (BCryptHash(alg, nullptr, 0, reinterpret_cast<PUCHAR>(const_cast<char*>(data.data())), static_cast<ULONG>(data.size()), digest.data(), length) == 0)
+            for (UCHAR b : digest) { char two[3]; sprintf_s(two, "%02x", b); hex += two; }
+        BCryptCloseAlgorithmProvider(alg, 0);
+        return hex;
+    }
+
+    std::string ReadFileBytes(const std::wstring& path)
+    {
+        std::string data;
+        if (FILE* f = nullptr; !_wfopen_s(&f, path.c_str(), L"rb") && f)
+        {
+            char buf[65536];
+            for (size_t n; (n = fread(buf, 1, sizeof(buf), f)) > 0;) data.append(buf, n);
+            fclose(f);
+        }
+        return data;
+    }
+
+    // Runs a command line hidden and waits; true when it exits with 0.
+    bool RunHidden(std::wstring command, DWORD timeoutMs)
+    {
+        STARTUPINFOW si{ sizeof(si) };
+        si.dwFlags = STARTF_USESHOWWINDOW;
+        si.wShowWindow = SW_HIDE;
+        PROCESS_INFORMATION pi{};
+        if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) return false;
+        DWORD exit = 1;
+        if (WaitForSingleObject(pi.hProcess, timeoutMs) == WAIT_OBJECT_0) GetExitCodeProcess(pi.hProcess, &exit);
+        else TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        return exit == 0;
+    }
+
+    void DeleteTree(const std::wstring& dir)
+    {
+        WIN32_FIND_DATAW fd;
+        HANDLE find = FindFirstFileW((dir + L"\\*").c_str(), &fd);
+        if (find != INVALID_HANDLE_VALUE)
+        {
+            do
+            {
+                std::wstring name = fd.cFileName;
+                if (name == L"." || name == L"..") continue;
+                std::wstring path = dir + L"\\" + name;
+                if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) DeleteTree(path);
+                else { SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL); DeleteFileW(path.c_str()); }
+            } while (FindNextFileW(find, &fd));
+            FindClose(find);
+        }
+        RemoveDirectoryW(dir.c_str());
+    }
+
+    // What kit-version.txt says about this kit: its label, the pdnet.dll MD5 prefix it was built with, its build number.
+    struct KitVersion { std::string label, md5; int build = 0; };
+    KitVersion ReadKitVersion()
+    {
+        KitVersion v;
+        std::string text = ReadFileBytes(g_dir + L"kit-version.txt"), line;
+        if (text.rfind("\xEF\xBB\xBF", 0) == 0) text.erase(0, 3);
+        size_t start = 0;
+        for (int n = 0; start < text.size(); ++n)
+        {
+            size_t end = text.find('\n', start);
+            line = text.substr(start, end == std::string::npos ? std::string::npos : end - start);
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (n == 0) v.label = line;
+            else if (line.rfind("pdnet.dll MD5 ", 0) == 0) v.md5 = line.substr(14, 8);
+            else if (line.rfind("Build: ", 0) == 0) v.build = atoi(line.c_str() + 7);
+            if (end == std::string::npos) break;
+            start = end + 1;
+        }
+        for (auto& c : v.md5) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+        return v;
+    }
+
+    // Moves `from` over `to` (same volume: the file keeps the read access it got where it was made, inside the kit).
+    bool Replace(const std::wstring& from, const std::wstring& to)
+    {
+        return MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING) != FALSE;
+    }
+
+    void CheckForUpdate()
+    {
+        KitVersion kit = ReadKitVersion();
+        std::wstring fallback = kit.label.find("Experimental") != std::string::npos ? L"experimental"
+                              : kit.label.find("Stable") != std::string::npos ? L"stable" : L"off";
+        std::wstring channel = Setting(L"update_channel", L"");
+        if (channel.empty()) channel = fallback;
+        if (_wcsicmp(channel.c_str(), L"off") == 0) { Log(L"update: off (%s)", fallback == L"off" ? L"development build" : L"update_channel=off"); return; }
+        bool experimental = _wcsicmp(channel.c_str(), L"experimental") == 0;
+
+        std::string md5 = HashHex(BCRYPT_MD5_ALGORITHM, ReadFileBytes(g_dir + L"pdnet.dll")).substr(0, 8);
+        if (!kit.md5.empty() && md5 != kit.md5)
+        {
+            Log(L"update: skipped - pdnet.dll (%S) isn't this kit's (%S), a build installed by hand", md5.c_str(), kit.md5.c_str());
+            return;
+        }
+
+        std::wstring repo = Setting(L"update_repo", L"SnowRyze/Phantom-Dust-Rebirth");
+        std::string json;
+        if (!HttpsGet(L"api.github.com", L"/repos/" + repo + L"/releases?per_page=30", json, 4000))
+        {
+            Log(L"update: GitHub not reached - not checked");
+            return;
+        }
+        // Releases come newest first; in each, "prerelease" comes before its assets. The highest build on the channel wins.
+        int best = 0;
+        std::string bestUrl;
+        bool pre = false;
+        for (size_t at = 0;;)
+        {
+            size_t p = json.find("\"prerelease\":", at), a = json.find("\"browser_download_url\":", at);
+            if (p == std::string::npos && a == std::string::npos) break;
+            if (p != std::string::npos && (a == std::string::npos || p < a))
+            {
+                pre = json.compare(p + 13, 4, "true") == 0 || json.compare(p + 14, 4, "true") == 0;
+                at = p + 13;
+                continue;
+            }
+            size_t q1 = json.find('"', a + 23), q2 = q1 == std::string::npos ? q1 : json.find('"', q1 + 1);
+            if (q2 == std::string::npos) break;
+            std::string url = json.substr(q1 + 1, q2 - q1 - 1);
+            at = q2;
+            size_t name = url.rfind("/pdnet-update-");
+            if (name == std::string::npos || (pre && !experimental)) continue;
+            int build = atoi(url.c_str() + name + 14);
+            if (build > best) { best = build; bestUrl = url; }
+        }
+        if (best <= kit.build)
+        {
+            Log(L"update: up to date (build %d, %s channel)", kit.build, experimental ? L"experimental" : L"stable");
+            return;
+        }
+        std::string asset = "pdnet-update-" + std::to_string(best) + ".zip";
+        size_t s = json.find("sha256 " + asset + " ");
+        std::string expected = s == std::string::npos ? std::string() : json.substr(s + 8 + asset.size(), 64);
+        if (expected.size() != 64)
+        {
+            Log(L"update: build %d has no sha256 line for %S - not installed", best, asset.c_str());
+            return;
+        }
+
+        Log(L"update: build %d available (this kit is build %d) - downloading", best, kit.build);
+        URL_COMPONENTS parts{ sizeof(parts) };
+        wchar_t host[256], path[2048];
+        parts.lpszHostName = host; parts.dwHostNameLength = _countof(host);
+        parts.lpszUrlPath = path; parts.dwUrlPathLength = _countof(path);
+        std::wstring wurl(bestUrl.begin(), bestUrl.end());
+        std::string zip;
+        if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &parts) || !HttpsGet(host, path, zip, 30000))
+        {
+            Log(L"update: download failed - not installed");
+            return;
+        }
+        if (HashHex(BCRYPT_SHA256_ALGORITHM, zip) != expected)
+        {
+            Log(L"update: download doesn't match its sha256 - not installed");
+            return;
+        }
+
+        std::wstring work = g_dir + L"update", fresh = work + L"\\new", backup = work + L"\\backup", file = work + L"\\download.zip";
+        DeleteTree(fresh);
+        CreateDirectoryW(work.c_str(), nullptr);
+        CreateDirectoryW(fresh.c_str(), nullptr);
+        if (FILE* f = nullptr; !_wfopen_s(&f, file.c_str(), L"wb") && f) { fwrite(zip.data(), 1, zip.size(), f); fclose(f); }
+        wchar_t system[MAX_PATH];
+        GetSystemDirectoryW(system, MAX_PATH);
+        if (!RunHidden(L"\"" + std::wstring(system) + L"\\tar.exe\" -xf \"" + file + L"\" -C \"" + fresh + L"\"", 60000) ||
+            GetFileAttributesW((fresh + L"\\pdnet\\pdnet.dll").c_str()) == INVALID_FILE_ATTRIBUTES)
+        {
+            Log(L"update: couldn't unpack build %d - not installed", best);
+            DeleteTree(fresh);
+            DeleteFileW(file.c_str());
+            return;
+        }
+
+        // Back up and replace every file the update has, except the player's own settings.
+        DeleteTree(backup);
+        CreateDirectoryW(backup.c_str(), nullptr);
+        std::vector<std::wstring> done;
+        bool failed = false;
+        WIN32_FIND_DATAW fd;
+        HANDLE find = FindFirstFileW((fresh + L"\\pdnet\\*").c_str(), &fd);
+        if (find != INVALID_HANDLE_VALUE)
+        {
+            do
+            {
+                std::wstring name = fd.cFileName;
+                if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || _wcsicmp(name.c_str(), L"eos.ini") == 0 || _wcsicmp(name.c_str(), L"pdnet.ini") == 0) continue;
+                std::wstring current = g_dir + name;
+                bool exists = GetFileAttributesW(current.c_str()) != INVALID_FILE_ATTRIBUTES;
+                // A running exe (this one) can be renamed though not overwritten: it moves to the backup like the rest.
+                if (exists && !Replace(current, backup + L"\\" + name)) { failed = true; break; }
+                if (!Replace(fresh + L"\\pdnet\\" + name, current)) { failed = true; if (exists) Replace(backup + L"\\" + name, current); break; }
+                done.push_back(name);
+            } while (FindNextFileW(find, &fd));
+            FindClose(find);
+        }
+        if (failed)
+        {
+            for (auto& name : done) // put the old files back
+                if (GetFileAttributesW((backup + L"\\" + name).c_str()) != INVALID_FILE_ATTRIBUTES) Replace(backup + L"\\" + name, g_dir + name);
+            Log(L"update: replacing files failed (%lu) - the old version is back", GetLastError());
+        }
+        else
+        {
+            std::wstring setup = fresh + L"\\Setup.bat", parentSetup = g_dir + L"..\\Setup.bat";
+            if (GetFileAttributesW(setup.c_str()) != INVALID_FILE_ATTRIBUTES && GetFileAttributesW(parentSetup.c_str()) != INVALID_FILE_ATTRIBUTES) Replace(setup, parentSetup);
+            Log(L"update: installed build %d (%zu files; the previous version is in pdnet\\update\\backup)", best, done.size());
+        }
+        DeleteTree(fresh);
+        DeleteFileW(file.c_str());
+    }
+
     // The game's LocalState folder (pdnet builds the same path, src\log.cpp).
     std::wstring GameLocalState(HANDLE process)
     {
@@ -721,6 +980,13 @@ int wmain(int argc, wchar_t** argv)
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
     g_dir = exe;
     g_dir = g_dir.substr(0, g_dir.find_last_of(L'\\') + 1);
+
+    // pdlaunch.exe -update: only the update check (to update without starting the game, and to test the updater).
+    if (argc == 2 && _wcsicmp(argv[1], L"-update") == 0)
+    {
+        CheckForUpdate();
+        return 0;
+    }
 
     DWORD pid = 0, tid = 0;
     for (int i = 1; i + 1 < argc; ++i)
@@ -762,6 +1028,7 @@ int wmain(int argc, wchar_t** argv)
     HANDLE game = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
     std::wstring localState = game ? GameLocalState(game) : std::wstring();
     if (!localState.empty()) DeleteFileW(PastTitleFile(localState).c_str()); // from the last start: pdnet writes it again
+    CheckForUpdate(); // before anything loads pdnet.dll, SDL3.dll or the EOS SDK, which it may replace
     CheckClock(localState); // before pdnet starts EOS, which reads the offset
     KeepIdentity(localState, true); // before the game runs: the same player as always
     std::thread controllers(ReadControllers, pid, localState); // until the game exits

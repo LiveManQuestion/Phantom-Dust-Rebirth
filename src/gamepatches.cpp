@@ -26,6 +26,7 @@ namespace pdnet::gamepatches
         // tag only in Tag Team, and each other player's tag colour by match slot (ally / enemy, both ARGB twice).
         std::atomic<uint8_t> g_bodyTagsNow{ 0 };
         std::atomic<uint8_t> g_slotGone[4]{}; // per match slot: that player left (no nametag), set by NametagColours
+        std::atomic<bool> g_testBattle{ false }; // Lab > Test Arsenal's battle is on (OpenTestArsenal); its AI is no network player
         std::atomic<uint64_t> g_tagColour[8]{ ~0ull, ~0ull, ~0ull, ~0ull, ~0ull, ~0ull, ~0ull, ~0ull };
         std::atomic<uint64_t> g_deadColour{ ~0ull }; // a dead player's nametag colour, twice (read by the colour routine)
         std::atomic<uint8_t> g_playDead[4]{}; // per player slot: lying in Play Dead (TrackPlayDead), read by the colour routine
@@ -375,7 +376,8 @@ namespace pdnet::gamepatches
             bool match = state != 0 && state != 13;
             for (int s = 0; s < 4; ++s)
             {
-                uint8_t gone = match && v.matchName[s][0] && !present[s] ? 1 : 0;
+                // Test Arsenal's AI opponent is never a network player: nobody counts as left there.
+                uint8_t gone = match && !g_testBattle && v.matchName[s][0] && !present[s] ? 1 : 0;
                 if (g_slotGone[s].exchange(gone) != gone && gone) Log(L"gamepatch: %S left the match - nametag hidden", v.matchName[s]);
             }
         }
@@ -612,7 +614,10 @@ namespace pdnet::gamepatches
         // livearsel 67, compe_res 78 (results, then the multiplayer menu 36). Its back to the scoreboard (41) goes to the
         // Lab instead, and wins in it don't count for the EOS scoreboard (TestBattle).
         constexpr int kScoreBattleMenu = 74, kScoreboardMenu = 41, kMultiplayerMenu = 36;
-        std::atomic<bool> g_testBattle{ false };
+        // livedbtlres (75) comes after a scoreboard battle: Xbox Live player feedback on the opponent ("Send this
+        // feedback?", Cheating...), dead without Xbox Live and removed: a Test Arsenal battle goes back to the Lab,
+        // any other to the scoreboard, where the feedback screen would have gone.
+        constexpr int kFeedbackMenu = 75;
         using PushMenuFn = int (*)(int64_t manager, int menu, char force);
         using PopMenuFn = int (*)();
         PushMenuFn g_pushMenu = nullptr; // the original functions (trampolines)
@@ -806,6 +811,13 @@ namespace pdnet::gamepatches
             if (menu == 68) g_settingsOpenedAt = GetTickCount64();
             RenameStrings(); // cheap; covers string tables loaded after start-up
             if (menu != current) Log(L"menu: open %d (from %d)", menu, current);
+            if (menu == kFeedbackMenu)
+            {
+                int to = g_testBattle ? kLabMenu : kScoreboardMenu;
+                g_testBattle = false;
+                Log(L"menu: player feedback screen skipped - menu %d instead", to);
+                return g_pushMenu(manager, to, force);
+            }
             if (g_testBattle && current == kScoreBattleMenu && menu == kScoreboardMenu)
             {
                 g_testBattle = false;

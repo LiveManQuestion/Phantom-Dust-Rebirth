@@ -2201,25 +2201,40 @@ namespace pdnet::gamepatches
         }
 
         // Laboratory (menu 45, also opened from the lobby): Buy Arsenal Case and Sell Arsenal Case after View Tutorial
-        // Movie, with the shop's hints. Its script state is "MAIN" too, so picking them is event 103 / 104 with the
-        // missing labels aMAIN_S3 / aMAIN_S4 (CheckSendLogPick); pdnet then opens arsenalbuy (30) / arsenalsell (31) on
-        // top the way the script's "open menu" does, and their back returns to the Laboratory, as it does to the shop.
+        // Movie, with the shop's hints. The Laboratory adds its rows with menu command 59 (add item with an id:
+        // args[0] id, args[1] text; ids 0-2) and their hints with command 40 (HookedAddItem). Its script state is "MAIN"
+        // too, so picking the new rows is event 103 / 104 with the missing labels aMAIN_S3 / aMAIN_S4 (CheckSendLogPick);
+        // pdnet then opens arsenalbuy (30) / arsenalsell (31) on top the way the script's "open menu" does, and their back
+        // returns to the Laboratory, as it does to the shop. (Experimental 79 looked for the rows in command 40: none.)
         const char* kCaseItems[2] = { "Buy Arsenal Case", "Sell Arsenal Case" };
         const char* kCaseHints[2] = { "Buy an arsenal case.\nA case is necessary to create a new arsenal.", "Sell arsenal cases that you don't need." };
+        bool CaseItemsReady() { return g_logItemReady && g_pushMenu; } // no items that can't work
 
         bool CaseItems(const char* added, int64_t* args, int64_t& result)
         {
-            if (!g_logItemReady || !g_pushMenu) return false; // no items that can't work
-            bool row = strcmp(added, "View Tutorial Movie") == 0, hint = strcmp(added, "See a tutorial movie about arsenals.") == 0;
-            if (!row && !hint) return false;
+            if (!CaseItemsReady() || strcmp(added, "See a tutorial movie about arsenals.") != 0) return false;
             result = g_addItem(args);
-            for (int i = 0; i < 2; ++i)
+            for (const char* hint : kCaseHints)
             {
-                int64_t item[8] = { reinterpret_cast<int64_t>(row ? kCaseItems[i] : kCaseHints[i]) };
+                int64_t item[8] = { reinterpret_cast<int64_t>(hint) };
                 g_addItem(item);
             }
-            if (row) Log(L"gamepatch: Arsenal Lab: Buy / Sell Arsenal Case items added");
             return true;
+        }
+
+        MenuCommandFn g_addIdItem = nullptr;
+        int64_t HookedAddIdItem(int64_t* args)
+        {
+            int64_t result = g_addIdItem(args);
+            char text[32];
+            if (!args || !CaseItemsReady() || !CopyString(reinterpret_cast<const char*>(args[1]), text, sizeof(text)) || strcmp(text, "View Tutorial Movie") != 0) return result;
+            for (int i = 0; i < 2; ++i)
+            {
+                int64_t item[8] = { 3 + i, reinterpret_cast<int64_t>(kCaseItems[i]) };
+                g_addIdItem(item);
+            }
+            Log(L"gamepatch: Arsenal Lab: Buy / Sell Arsenal Case items added");
+            return result;
         }
 
         void OpenCaseMenu(int menu)
@@ -2400,6 +2415,8 @@ namespace pdnet::gamepatches
             Log(L"gamepatch: Options > Sound: row %s, sounds %s (aura beeps %s%s)", rows ? L"ready" : L"not added",
                 g_sound2D && g_sound3D ? L"hooked" : L"NOT hooked", GetConfig().auraBeeps ? L"on" : L"off", GetConfig().soundLog ? L", sound_log on" : L"");
             g_logItemReady = g_setState != nullptr;
+            bool caseRows = WrapCommand<MenuCommandFn>(0x1403eefe0 + 59 * 8, 0x140207ec0, &HookedAddIdItem, g_addIdItem, L"Arsenal Lab rows");
+            Log(L"gamepatch: Arsenal Lab Buy / Sell Arsenal Case %s", caseRows && CaseItemsReady() ? L"ready" : L"NOT added");
             Log(L"gamepatch: Options > Send Log %s (log_webhook %s)", g_logItemReady ? L"ready" : L"NOT added", GetConfig().logWebhook.empty() ? L"not set" : L"set");
         }
 

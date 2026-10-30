@@ -2200,10 +2200,12 @@ namespace pdnet::gamepatches
             Log(L"gamepatch: Options > Updates: %s (used from the next game start)", next.c_str());
         }
 
-        // Laboratory (menu 45, also opened from the lobby): Buy Arsenal Case and Sell Arsenal Case after View Tutorial
-        // Movie, with the shop's hints. The Laboratory adds its rows with menu command 59 (add item with an id:
-        // args[0] id, args[1] text; ids 0-2) and their hints with command 40 (HookedAddItem). Its script state is "MAIN"
-        // too, so picking the new rows is event 103 / 104 with the missing labels aMAIN_S3 / aMAIN_S4 (CheckSendLogPick);
+        // Laboratory (menu 45, also opened from the lobby): Buy Arsenal Case and Sell Arsenal Case after View Stock List
+        // (View Tutorial Movie, id 2, is added only in some modes: not in multiplayer), with the shop's hints. The
+        // Laboratory adds its rows with menu command 59 (add item with an id: args[0] id, args[1] text) and their hints
+        // with command 40 (HookedAddItem). A pick in such a list is event 100 + the row's id (FUN_14024b000), and its
+        // script state is "MAIN" too, so picking the new rows (ids 3 and 4) is event 103 / 104 with the missing labels
+        // aMAIN_S3 / aMAIN_S4 (CheckSendLogPick);
         // pdnet then opens arsenalbuy (30) / arsenalsell (31) on top the way the script's "open menu" does, and their back
         // returns to the Laboratory, as it does to the shop. (Experimental 79 looked for the rows in command 40: none.)
         const char* kCaseItems[2] = { "Buy Arsenal Case", "Sell Arsenal Case" };
@@ -2212,7 +2214,7 @@ namespace pdnet::gamepatches
 
         bool CaseItems(const char* added, int64_t* args, int64_t& result)
         {
-            if (!CaseItemsReady() || strcmp(added, "See a tutorial movie about arsenals.") != 0) return false;
+            if (!CaseItemsReady() || strcmp(added, "Display your stock list.") != 0) return false;
             result = g_addItem(args);
             for (const char* hint : kCaseHints)
             {
@@ -2227,7 +2229,7 @@ namespace pdnet::gamepatches
         {
             int64_t result = g_addIdItem(args);
             char text[32];
-            if (!args || !CaseItemsReady() || !CopyString(reinterpret_cast<const char*>(args[1]), text, sizeof(text)) || strcmp(text, "View Tutorial Movie") != 0) return result;
+            if (!args || !CaseItemsReady() || !CopyString(reinterpret_cast<const char*>(args[1]), text, sizeof(text)) || strcmp(text, "View Stock List") != 0) return result;
             for (int i = 0; i < 2; ++i)
             {
                 int64_t item[8] = { 3 + i, reinterpret_cast<int64_t>(kCaseItems[i]) };

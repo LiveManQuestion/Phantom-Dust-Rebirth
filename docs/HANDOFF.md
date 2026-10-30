@@ -456,7 +456,7 @@ build-import3 test on the unpacked Direct copy: the import started, the real Win
 Import fallback (build-import5): unpacked copies read the local Xbox save cache LocalState\..\SystemAppData\wgs (containers.index + <folder GUID>\container.<n> + blob files named by GUID, Windows GUID byte order, fields checked and logged); the Store version tries the Xbox service first and falls back to the cache. Cache copies go to saves.cache-import, then the same swap. Untested on a real cache (the Direct PC's wgs is empty).
 
 ## Open items (parked 2026-10-21, no testers available)
-- Xbox save import (build-import5 / kit 3F8C59F0): failure path confirmed on the unpacked Direct copy; a real import is untested. Needs a tester who played the Store version on that PC: press IMPORT XBOX SAVE, restart, check story/collection/arsenals, send Collect-Log (it lists every container/blob or where the wgs cache parse stopped).
+- (No longer needed, the user 2026-10-30.) Xbox save import (build-import5 / kit 3F8C59F0): failure path confirmed on the unpacked Direct copy; a real import is untested. Needs a tester who played the Store version on that PC: press IMPORT XBOX SAVE, restart, check story/collection/arsenals, send Collect-Log (it lists every container/blob or where the wgs cache parse stopped).
 - In-lobby game type/rule change: reverted (notes above for a later attempt).
 - Tag Team switching crash, client-side lobby limit: only relevant if the lobby settings change comes back.
 
@@ -478,27 +478,27 @@ name, ghost lobbies hidden, shorter join wait, Discord Rated/Unrated.
 Experimental 1 = build-resend1 (70A91FE2): join requests re-sent every 2 s until answered (an intermittent "hung on
 joining": the single request sent while EOS set up the P2P link was lost); voice + Gamertag on, p2p_debug=on.
 
-## Waiting for testers (as of 2026-10-22; newest kit Experimental 15 has all of these)
-1. **Nametag of a player who left a match** (Experimental 13): 3+ players, one leaves mid-match (disconnect / quit to
-   menu / close the game); their nametag should vanish. Log: "gamepatch: X left the match - nametag hidden". Risk: if
-   the game's peer list (0x140595ea8) doesn't list every player in a match, present players would be hidden too.
-2. **Tag Team voice channels** (Experimental 11+): lobby everyone hears everyone; Tag Team match only your team. Log:
-   "gamepatch: game state N (match)" (verifies the lobby/match detection), "voice: team channel: X muted".
-   Also try the pause menu's Voice Chat option mid-match (assumed to be the same setting flag 15).
-3. **Nametag colours in a real match** (Experimental 3+): enemy red everywhere, ally blue + dead yellow in Tag Team.
-4. **Other players' megaphone** following their Mic setting (Experimental 5+; only this PC's own was seen).
-5. **Arsenal Lab for non-hosts** (Experimental 14): a player who joined (not the host) sees "Arsenal Lab" (Y) in the
-   lobby's hint line and Y opens the Arsenal editor, backing out returns to the lobby. Log: "gamepatch: lobby Arsenal
-   Lab button for every player (1 of 1 check)" when a lobby opens (livelobby albmain_ty's host check: its jz +3 ->
-   jz +0), "text 'lobby_client' now has the Arsenal Lab button" (seen on this PC already).
-6. **Quick Join** (Experimental 15; was Quick Match): with a tester hosting a NON-Quick lobby (e.g. Standard), Quick
-   Join should join it. A player with no usable multiplayer arsenal should only find Quick lobbies. Log: "Quick Join -
-   any game type; rules this player can play: mask 0x..." (bit N = rule N; this PC: 0xDFF, no Heavy Only arsenal).
-   The rename and the search change were checked on this PC with no lobbies open.
-7. **Mind Reading** (Experimental 85, added 2026-10-30): a Tag Team match with at least one player per team and voice
-   on. Before casting you don't hear the other team; while Mind Reading is active you do; when it ends, only your team
-   again. Log: "voice: Mind Reading on - the other team is heard too" / "over", and "voice: team channel: X heard /
-   muted (other team)".
+## Confirmed by the user (2026-10-30)
+Tested and working: Tag Team voice channels (lobby: everyone; match: own team), nametag colours in a real match,
+the nametag of a player who left a match vanishing, other players' megaphone following their Mic setting, Arsenal Lab
+for non-hosts, Quick Join (non-Quick lobbies; Quick only without a usable arsenal), Online Store removed / Theater
+(Experimental 75), the EOS clock correction (joins with a wrong PC clock), and controllers other than Xbox
+(Experimental 40). Also confirmed earlier: Options > Updates switching channel, Arsenal Lab Buy / Sell Arsenal Case.
+The Xbox save import real test is no longer needed (the user, 2026-10-30).
+
+## Waiting for testers (as of 2026-10-30)
+1. **Mind Reading** (Experimental 85): a Tag Team match with at least one player per team and voice on. Before
+   casting you don't hear the other team; while Mind Reading is active you do; when it ends, only your team again.
+   Log: "voice: Mind Reading on - the other team is heard too" / "over", and "voice: team channel: X heard / muted
+   (other team)".
+2. **Match freeze fix** (Experimental 69): a full 4-player match doesn't freeze for everyone.
+3. **Discord close fix** (Experimental 70): the lobby's Discord message says closed after the last player closes the game.
+4. **Nametags always on** (Experimental 73): shown from the start of a match; the nametag button does nothing.
+5. **Edit-Settings.bat / hand-typed colours** (Experimental 74): a hex colour typed into settings.ini shows in the game.
+6. **Going back to Stable** (Experimental 77): an Experimental kit set to Updates: Stable installs Stable 10 at the
+   next start ("update: stable channel - going back to Stable build N" in pdlaunch.log).
+7. **Start-up crash fix** (Experimental 78): a timing race, can't be forced; the check is that it doesn't come back.
+Known, not fixed: players from earlier lobbies keep their links and get reconnected every minute.
 
 ## Feature backlog (could be added / revisited)
 Parked ideas and half-finished features, newest first. Each has its notes earlier in this file.
@@ -506,7 +506,7 @@ Parked ideas and half-finished features, newest first. Each has its notes earlie
    stubs on the menu 0x1403eefe0 x136 and session 0x1403f1150 x196 command tables log a command polled with the same result
    for 30 s and screens up for 60 s; normal baseline = title screen menu 7, commands 6/109). Taken out of the build by request.
    Next: bring it back (git show 4cf65cb), catch real hangs in the log, then time out those specific waits (step 2).
-2. **Xbox save import, real test** (built, kit 3F8C59F0+): IMPORT XBOX SAVE (was Help & Support). Failure path confirmed on an
+2. **Xbox save import, real test** (no longer needed, the user 2026-10-30; built, kit 3F8C59F0+): IMPORT XBOX SAVE (was Help & Support). Failure path confirmed on an
    unpacked copy; a real import from the Xbox service (Store) or the local wgs cache needs a tester who played the Store version.
 3. **In-lobby game type / rule change** (reverted 2026-10-21, commit 4ff540e). Worked solo; open problems: switching into Tag
    Team crashed other players; players who joined a One-on-One kept a 2-player limit (follow-host fix untested). Notes: menu 48,

@@ -2983,6 +2983,24 @@ namespace pdnet::gamepatches
         return true;
     }
 
+    // Mind Reading is status effect 0x25. The game's voice rule (FUN_1400c61f0, run for each received voice buffer) plays
+    // a buffer when the chat manager (*(DAT_1404bbc48 + 0x18)) has +0xac set or the sender's channel equals +0xa8 (the
+    // team). During a match FUN_140187a90 calls FUN_140187180 for each slot every frame, which sets this PC's +0xa8 to
+    // its team and +0xac to "has status 0x25". Read here (only a byte; the game keeps it current).
+    bool MindReading()
+    {
+        __try
+        {
+            uint8_t* chat = *reinterpret_cast<uint8_t**>(At(0x1404bbc48));
+            uint8_t* manager = chat ? *reinterpret_cast<uint8_t**>(chat + 0x18) : nullptr;
+            return manager && manager[0xac] != 0;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
     // As FUN_1401831f0 (session command 144) works it out, read-only: rule N needs the arsenal flags in the rule
     // table 0x1402dbc78[N] (0 = no arsenal needed: Quick); the multiplayer arsenals are up to 16 entries of 100 bytes
     // at *(save + 0x10a*0x38) (save = DAT_1404bec10), an entry with byte +4 == 0 ends the list, flags word at +0x52.

@@ -536,6 +536,7 @@ namespace pdnet::lobbies
         bool g_teamsActive = false;           // under g_teamLock
         std::map<std::string, int> g_teamOf;  // player name -> team, under g_teamLock
         int g_myTeam = -1;                    // under g_teamLock
+        bool g_mindReading = false;           // this PC's player has Mind Reading: the other team is heard too, under g_teamLock
 
         void EOS_CALL OnTeamReceiving(const EOS_RTCAudio_UpdateReceivingCallbackInfo* info)
         {
@@ -547,7 +548,7 @@ namespace pdnet::lobbies
         {
             EOS_HRTCAudio audio = api.EOS_RTC_GetAudioInterface(api.EOS_Platform_GetRTCInterface(g_voicePlatform));
             if (!audio) return;
-            bool active;
+            bool active, mindReading;
             std::map<std::string, int> teamOf;
             int myTeam;
             {
@@ -555,12 +556,13 @@ namespace pdnet::lobbies
                 active = g_teamsActive;
                 teamOf = g_teamOf;
                 myTeam = g_myTeam;
+                mindReading = g_mindReading;
             }
             std::lock_guard guard(g_talkLock);
             for (auto& [id, p] : g_participants)
             {
                 auto team = teamOf.find(p.name);
-                int heard = active && team != teamOf.end() && team->second != myTeam ? 0 : 1; // unknown name: keep hearing
+                int heard = active && !mindReading && team != teamOf.end() && team->second != myTeam ? 0 : 1; // unknown name: keep hearing
                 if (p.heard == heard || p.room.empty()) continue;
                 EOS_RTCAudio_UpdateReceivingOptions o{ EOS_RTCAUDIO_UPDATERECEIVING_API_LATEST, me, p.room.c_str(), api.EOS_ProductUserId_FromString(id.c_str()), heard ? EOS_TRUE : EOS_FALSE };
                 api.EOS_RTCAudio_UpdateReceiving(audio, &o, nullptr, OnTeamReceiving);
@@ -785,12 +787,16 @@ namespace pdnet::lobbies
                             std::map<std::string, int> teamOf;
                             int myTeam = -1;
                             bool active = gamepatches::TagTeamMatch(teamOf, myTeam);
+                            bool mindReading = active && gamepatches::MindReading();
                             bool changed;
                             {
                                 std::lock_guard guard(g_teamLock);
-                                changed = active != g_teamsActive || (active && (myTeam != g_myTeam || teamOf != g_teamOf));
+                                changed = active != g_teamsActive || (active && (myTeam != g_myTeam || teamOf != g_teamOf || mindReading != g_mindReading));
                                 if (changed && active != g_teamsActive)
                                     Log(L"voice: %s", active ? L"Tag Team match - team channels on (you hear only your team)" : L"team channels off - everyone hears everyone");
+                                if (mindReading != g_mindReading)
+                                    Log(L"voice: Mind Reading %s", mindReading ? L"on - the other team is heard too" : L"over - only your team again");
+                                g_mindReading = mindReading;
                                 g_teamsActive = active;
                                 g_teamOf = std::move(teamOf);
                                 g_myTeam = myTeam;

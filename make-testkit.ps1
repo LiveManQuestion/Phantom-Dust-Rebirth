@@ -30,6 +30,7 @@ $root = $PSScriptRoot
 # Where kits go: -KitDir, else D:\ (the original setup), else dist\ in the repository.
 if (-not $KitDir) { $KitDir = if (Test-Path 'D:\') { 'D:\' } else { "$root\dist" } }
 New-Item -ItemType Directory -Force $KitDir | Out-Null
+$KitDir = (Resolve-Path $KitDir).Path  # absolute: the zip step cuts entry names out of full paths
 Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
 
 # The highest "<kind> N" number among D:\PhantomDust-pdnet <kind> N.zip.

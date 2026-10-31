@@ -24,14 +24,17 @@
 # Kit layout (-Stage Kit / Store, from 2026-10-27): Setup.bat on its own at the top, everything else in a pdnet\ folder
 # (Setup.bat runs pdnet\setup.ps1; every script, pdlaunch and pdnet find their files in their own folder).
 param([ValidateSet('B', 'C', 'Store', 'Kit')][string]$Stage = 'Kit', [string]$EosIni, [string]$Build, [string]$Webhook,
-      [string[]]$Set, [string]$Notes, [int]$Promote, [string]$Commit)
+      [string[]]$Set, [string]$Notes, [int]$Promote, [string]$Commit, [string]$KitDir)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
+# Where kits go: -KitDir, else D:\ (the original setup), else dist\ in the repository.
+if (-not $KitDir) { $KitDir = if (Test-Path 'D:\') { 'D:\' } else { "$root\dist" } }
+New-Item -ItemType Directory -Force $KitDir | Out-Null
 Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
 
 # The highest "<kind> N" number among D:\PhantomDust-pdnet <kind> N.zip.
 function LastNumber([string]$kind) {
-    $numbers = Get-ChildItem 'D:\' -Filter "PhantomDust-pdnet $kind *.zip" | ForEach-Object { if ($_.BaseName -match " $kind (\d+)$") { [int]$Matches[1] } }
+    $numbers = Get-ChildItem $KitDir -Filter "PhantomDust-pdnet $kind *.zip" | ForEach-Object { if ($_.BaseName -match " $kind (\d+)$") { [int]$Matches[1] } }
     if ($numbers) { ($numbers | Measure-Object -Maximum).Maximum } else { 0 }
 }
 
@@ -63,20 +66,20 @@ function SetZipLabel([string]$zip, [string]$label) {
 }
 
 if ($Promote) {
-    $from = "D:\PhantomDust-pdnet Experimental $Promote.zip"
+    $from = Join-Path $KitDir "PhantomDust-pdnet Experimental $Promote.zip"
     if (-not (Test-Path $from)) { throw "No $from." }
     $number = (LastNumber 'Stable') + 1
     $label = "PhantomDust-pdnet Stable $number"
     Rename-Item $from "$label.zip"
-    SetZipLabel "D:\$label.zip" $label
+    SetZipLabel (Join-Path $KitDir "$label.zip") $label
     # The source of a stable kit: git tag stable-<M> on the commit its kit-version.txt names ("Source: <commit>").
-    $z = [IO.Compression.ZipFile]::OpenRead("D:\$label.zip")
+    $z = [IO.Compression.ZipFile]::OpenRead((Join-Path $KitDir "$label.zip"))
     $reader = New-Object IO.StreamReader((VersionEntry $z).Open())
     $source = ($reader.ReadToEnd() -split "`r?`n" | Where-Object { $_ -match '^Source: (\w+)' } | ForEach-Object { $Matches[1] } | Select-Object -First 1)
     $reader.Dispose(); $z.Dispose()
     if ($source) { git -C $root tag -f "stable-$number" $source | Out-Null; Write-Host "git tag stable-$number -> $source" }
     else { Write-Host "No Source line in kit-version.txt: tag stable-$number by hand (git tag stable-$number <commit>)." -ForegroundColor Yellow }
-    Write-Host "Experimental $Promote is now D:\$label.zip"
+    Write-Host "Experimental $Promote is now $(Join-Path $KitDir "$label.zip")"
     exit 0
 }
 if (-not $Build) { $Build = 'build-discord4' }
@@ -91,10 +94,13 @@ $counterFile = "$root\kit-counter.txt"
 $experimental = [Math]::Max((LastNumber 'Experimental'), $(if (Test-Path $counterFile) { [int](Get-Content $counterFile -Raw).Trim() } else { 0 })) + 1
 $name = if ($Stage -eq 'Kit') { "PhantomDust-pdnet Experimental $experimental" }
         else { "PhantomDust-pdnet-$(if ($Stage -eq 'Store') { 'StageC-Store-TestKit' } else { "Stage$Stage-TestKit" })-$($md5.Substring(0, 8))" + $(if ($EosIni) { '-with-eos' } else { '' }) }
-$out = "D:\$name"
-$zip = "D:\$name.zip"
-$sdkDll = Get-ChildItem 'C:\Users\ryhol\tools\downloads\eos-sdk' -Recurse -Filter 'EOSSDK-Win64-Shipping.dll' | Select-Object -First 1
-if (-not $sdkDll) { throw 'EOSSDK-Win64-Shipping.dll not found under C:\Users\ryhol\tools\downloads\eos-sdk.' }
+$out = Join-Path $KitDir $name
+$zip = Join-Path $KitDir "$name.zip"
+# EOS SDK DLL: under $env:EOS_SDK's parent, else deps\eos-sdk in the repository, else the original author's folder.
+$eosRoots = @($(if ($env:EOS_SDK) { Split-Path $env:EOS_SDK }), "$root\deps\eos-sdk", 'C:\Users\ryhol\tools\downloads\eos-sdk') |
+    Where-Object { $_ -and (Test-Path $_) }
+$sdkDll = $eosRoots | ForEach-Object { Get-ChildItem $_ -Recurse -Filter 'EOSSDK-Win64-Shipping.dll' } | Select-Object -First 1
+if (-not $sdkDll) { throw 'EOSSDK-Win64-Shipping.dll not found. Set EOS_SDK or unzip the EOS SDK into deps\eos-sdk (see BUILDING.md).' }
 if ($EosIni) {
     if (-not (Test-Path $EosIni)) { throw "No file at $EosIni." }
     if ((Resolve-Path $EosIni).Path -eq (Resolve-Path "$root\eos.local.ini" -ErrorAction SilentlyContinue).Path) {

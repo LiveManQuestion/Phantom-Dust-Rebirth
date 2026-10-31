@@ -1,6 +1,11 @@
 """Generates pdnet's stand-in for the Xbox Live library (XSAPI) from Microsoft.Xbox.Services.winmd.
 
-  py -I generate.py <path to Microsoft.Xbox.Services.winmd>
+  py -I generate.py [path to Microsoft.Xbox.Services.winmd]
+
+Without a path, the winmd is taken from Microsoft's Xbox Live SDK NuGet package 2017.4.20170428.2 (downloaded once
+into xsapi/winmd-cache/, checked by SHA-256). That release has the same winmd (and x64 Release DLL) size as the one
+Phantom Dust 1.3.25854.2 ships, and differs from its neighbours only in the build GUID/timestamp, so it generates the
+same code without needing a decrypted copy of the game.
 
 - gen/      C++/WinRT projection headers + module.g.cpp (regenerated every run; not in git)
 - stubs/    one .h/.cpp per XSAPI runtime class.
@@ -158,8 +163,42 @@ def is_generated(path):
     return bool(bodies) and all(i + 1 < len(lines) and lines[i + 1].strip().startswith('PDNET_XSAPI_STUB') for i in bodies)
 
 
+NUGET_VERSION = '2017.4.20170428.2'
+NUGET_URL = ('https://api.nuget.org/v3-flatcontainer/microsoft.xbox.live.sdk.winrt.uwp/{0}/'
+             'microsoft.xbox.live.sdk.winrt.uwp.{0}.nupkg').format(NUGET_VERSION)
+NUGET_ENTRY = 'build/native/lib/x64/v140/Release/Microsoft.Xbox.Services.winmd'
+NUGET_SHA256 = 'e1b950d584dc65445523584e4bc6197e3b6d4b39f361db65df22e63d27d53c1b'
+
+
+def nuget_winmd():
+    """Microsoft.Xbox.Services.winmd from the Xbox Live SDK NuGet package (downloaded once, then cached)."""
+    import hashlib
+    import urllib.request
+    import zipfile
+    cache = os.path.join(HERE, 'winmd-cache')
+    winmd = os.path.join(cache, 'Microsoft.Xbox.Services.winmd')
+
+    def ok(path):
+        with open(path, 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest() == NUGET_SHA256
+
+    if os.path.exists(winmd) and ok(winmd):
+        return winmd
+    os.makedirs(cache, exist_ok=True)
+    nupkg = os.path.join(cache, 'xsapi.nupkg')
+    print(f'Downloading the Xbox Live SDK {NUGET_VERSION} from nuget.org (about 80 MB, once)...')
+    urllib.request.urlretrieve(NUGET_URL, nupkg)
+    with zipfile.ZipFile(nupkg) as z, open(winmd, 'wb') as out:
+        out.write(z.read(NUGET_ENTRY))
+    os.remove(nupkg)
+    if not ok(winmd):
+        os.remove(winmd)
+        sys.exit('The downloaded Microsoft.Xbox.Services.winmd does not have the expected SHA-256.')
+    return winmd
+
+
 def main():
-    winmd = sys.argv[1]
+    winmd = sys.argv[1] if len(sys.argv) > 1 else nuget_winmd()
     gen = os.path.join(HERE, 'gen')
     stubs = os.path.join(HERE, 'stubs')
     tmp = os.path.join(HERE, 'gen-component')

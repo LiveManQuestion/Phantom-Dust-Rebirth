@@ -14,3 +14,6 @@ pdnet/xsapi/gen-component/
 pdnet/build-*.log
 pdnet/tools/out/
 eos.tester.ini
+pdnet/xsapi/winmd-cache/
+deps/
+dist/

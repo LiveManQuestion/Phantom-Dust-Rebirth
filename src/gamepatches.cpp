@@ -2313,11 +2313,12 @@ namespace pdnet::gamepatches
         std::atomic<bool> g_sendingLog{ false };
         bool g_logItemReady = false; // menu command 6 is wrapped (SoundOptions)
 
-        // Options > Updates: an eighth item, after Send Log, picked the same way (event 107, "aMAIN_S7"). It switches
-        // update_channel between stable and experimental in settings.ini, which pdlaunch reads at the next game start
-        // (CheckForUpdate; settings.ini overrides pdnet.ini). Empty means the kit's own kind (off for a development build).
+        // Options > Updates: an eighth item, after Send Log, picked the same way (event 107, "aMAIN_S7"). Each pick goes
+        // stable -> experimental -> off -> stable in update_channel (settings.ini), which pdlaunch reads at the next game
+        // start (CheckForUpdate; settings.ini overrides pdnet.ini; off: no check at all). Empty means the kit's own kind
+        // (off for a development build).
         char g_updateRowText[64];
-        const char* kUpdateHint = "Builds to update to at game start. Stable: tested. Experimental: newest, less tested.";
+        const char* kUpdateHint = "Builds to update to at game start. Stable: tested. Experimental: newest, less tested.\nOff: no automatic updates.";
 
         std::wstring UpdateChannel()
         {
@@ -2335,7 +2336,8 @@ namespace pdnet::gamepatches
 
         void SwitchUpdates()
         {
-            std::wstring next = _wcsicmp(UpdateChannel().c_str(), L"stable") == 0 ? L"experimental" : L"stable"; // Off goes to Stable
+            std::wstring now = UpdateChannel();
+            std::wstring next = _wcsicmp(now.c_str(), L"stable") == 0 ? L"experimental" : _wcsicmp(now.c_str(), L"experimental") == 0 ? L"off" : L"stable";
             EditableConfig().updateChannel = next;
             SaveSetting("update_channel", winrt::to_string(next));
             RefreshUpdateRow();

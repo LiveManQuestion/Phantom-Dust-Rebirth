@@ -506,6 +506,9 @@ The Xbox save import real test is no longer needed (the user, 2026-10-30).
 6. **Going back to Stable** (Experimental 77): an Experimental kit set to Updates: Stable installs Stable 10 at the
    next start ("update: stable channel - going back to Stable build N" in pdlaunch.log).
 7. **Start-up crash fix** (Experimental 78): a timing race, can't be forced; the check is that it doesn't come back.
+8. **Scoreboard ghost battles** (Experimental 92): Scoreboard > Ratings > pick a name (your own first) -> download ->
+   arsenal choice -> battle against that player's ghost arsenal. A player without a ghost gives "clip damaged". Log:
+   "ghost download for row ...", "ghost of ... loaded"; no wins or rating change after it.
 Known, not fixed: players from earlier lobbies keep their links and get reconnected every minute.
 
 ## Feature backlog (could be added / revisited)

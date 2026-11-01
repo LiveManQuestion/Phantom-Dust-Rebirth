@@ -2499,6 +2499,31 @@ namespace pdnet::gamepatches
         // pdnet's leaderboard gave the game; else by name, row +0xc) gets their Ghost stats from EOS on a thread:
         // status 1 (the script waits) until the opponent's arsenal is filled in (3) or there is no ghost (4: the
         // game says the clip is damaged).
+        // A row can be picked only when g4 #650 (FUN_1402145e0, args[0] = the row) returns its clip text: that needs an
+        // Xbox privilege check (FUN_1400bf4d0) and a non-empty RatingGameClip string, which pdnet's rows never have
+        // (Experimental 91: no name could be picked). Rows whose EOS player is known now answer a placeholder; the
+        // real ghost is fetched on the pick (HookedClipDownload).
+        std::string RowUser(int row);
+        NativeFn g_rowClip = nullptr;
+        int64_t HookedRowClip(int64_t* args)
+        {
+            static const char kPlaceholder[] = "ghost";
+            int row = args ? static_cast<int>(args[0]) : -1;
+            if (row >= 0 && row < 64 && !RowUser(row).empty()) return reinterpret_cast<int64_t>(kPlaceholder);
+            return g_rowClip(args);
+        }
+
+        // The EOS player behind a scoreboard row: row +0 is the id pdnet's leaderboard gave the game, else the name at +0xc.
+        std::string RowUser(int row)
+        {
+            uint8_t* entry = At(0x14051d4c0 + row * 0x4c);
+            std::string user = xsapi::EosUserOf(std::to_wstring(*reinterpret_cast<uint64_t*>(entry)));
+            if (!user.empty()) return user;
+            char name[0x41] = {};
+            memcpy(name, entry + 0xc, 0x40);
+            return name[0] ? xsapi::EosUserOfName(std::wstring{ winrt::to_hstring(name) }) : std::string{};
+        }
+
         NativeFn g_clipDownload = nullptr;
         int64_t HookedClipDownload(int64_t* args)
         {
@@ -2511,8 +2536,7 @@ namespace pdnet::gamepatches
             char name[0x41] = {};
             memcpy(name, entry + 0xc, 0x40);
             std::wstring wname{ winrt::to_hstring(name) };
-            std::string user = xsapi::EosUserOf(std::to_wstring(id));
-            if (user.empty()) user = xsapi::EosUserOfName(wname);
+            std::string user = RowUser(row);
             Log(L"gamepatch: ghost download for row %d ('%s', id %llu): %S", row, wname.c_str(), id, user.empty() ? "no EOS player known" : user.c_str());
             if (user.empty()) { *status = 4; return result; }
             *status = 1;
@@ -2717,7 +2741,8 @@ namespace pdnet::gamepatches
             memset(g_rowAction, -1, sizeof(g_rowAction));
             if (GetConfig().scoreboard)
             {
-                bool ghosts = WrapCommand<NativeFn>(0x1403f0090 + 659 * 8, 0x140214740, &HookedClipDownload, g_clipDownload, L"scoreboard ghost download");
+                bool ghosts = WrapCommand<NativeFn>(0x1403f0090 + 659 * 8, 0x140214740, &HookedClipDownload, g_clipDownload, L"scoreboard ghost download") &&
+                              WrapCommand<NativeFn>(0x1403f0090 + 650 * 8, 0x1402145e0, &HookedRowClip, g_rowClip, L"scoreboard rows with a ghost");
                 Log(L"gamepatch: scoreboard ghost battles %s", ghosts ? L"ready (Ghost0-13 stats)" : L"NOT ready");
             }
             bool caseRows = WrapCommand<MenuCommandFn>(0x1403eefe0 + 59 * 8, 0x140207ec0, &HookedAddIdItem, g_addIdItem, L"Arsenal Lab rows");

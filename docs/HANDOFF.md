@@ -512,6 +512,10 @@ The Xbox save import real test is no longer needed (the user, 2026-10-30).
 8. **Scoreboard ghost battles** (Experimental 92): Scoreboard > Ratings > pick a name (your own first) -> download ->
    arsenal choice -> battle against that player's ghost arsenal. A player without a ghost gives "clip damaged". Log:
    "ghost download for row ...", "ghost of ... loaded"; no wins or rating change after it.
+9. **Lock onto partner** (Experimental 96; did nothing in a Tag Team match on 95): in a Tag Team match press RB (and
+   Tab, partner_lock_key) a few times, then Send Log. The log says how far it got: "lock onto partner: RB / key
+   pressed", "camera hook running", "camera of ... this PC's player ...", "lock onto partner on / off", or "reading the
+   Xbox controllers failed". Then: the target marker on the partner, a healing skill reaching them.
 Known, not fixed: players from earlier lobbies keep their links and get reconnected every minute.
 
 ## Feature backlog (could be added / revisited)

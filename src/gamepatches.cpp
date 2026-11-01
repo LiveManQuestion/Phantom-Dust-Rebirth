@@ -3339,6 +3339,84 @@ namespace pdnet::gamepatches
         }
     }
 
+    namespace
+    {
+        // Modpacks (PD Helper's ModLoader = Skill Editor) write their skill data straight into the game's copy of
+        // gsdata_<lang>.dat in memory: the block at 0x1404c5240 (pointer DAT_1404c5228, 0x44004 bytes, loaded once at
+        // start-up by FUN_14017da90). Players saw it go back to vanilla after matches, online / lobby screens and the
+        // title screen; no game code found re-reads it after start-up, so the cause isn't pinned down. SkillDataGuard
+        // keeps the mod: it compares the block with the file on disk and with the last modded state it saw, every 200 ms.
+        // Changes that aren't a return to vanilla are taken as the new modded state (Skill Editor's live edits too); when
+        // most modded bytes return to vanilla at once, the modded state is copied back and the moment is logged.
+        constexpr size_t kSkillDataSize = 0x44004;
+
+        std::vector<uint8_t> VanillaSkillData()
+        {
+            wchar_t exe[MAX_PATH];
+            GetModuleFileNameW(nullptr, exe, MAX_PATH);
+            std::wstring dir = exe;
+            dir = dir.substr(0, dir.find_last_of(L'\\') + 1);
+            bool japanese = *reinterpret_cast<int32_t*>(At(0x1403df644)) == 2;
+            std::wstring path = dir + L"Assets\\Data\\gstorage\\" + (japanese ? L"gsdata_ja.dat" : L"gsdata_en.dat");
+            std::vector<uint8_t> data;
+            if (FILE* f = nullptr; !_wfopen_s(&f, path.c_str(), L"rb") && f)
+            {
+                data.resize(kSkillDataSize);
+                data.resize(fread(data.data(), 1, data.size(), f));
+                fclose(f);
+            }
+            if (data.size() != kSkillDataSize) { Log(L"gamepatch: modpack guard off - %s isn't readable or isn't %zu bytes", path.c_str(), kSkillDataSize); data.clear(); }
+            return data;
+        }
+
+        void SkillDataGuard()
+        {
+            std::thread([]
+            {
+                std::vector<uint8_t> vanilla = VanillaSkillData();
+                if (vanilla.empty()) return;
+                uint8_t* block = At(0x1404c5240);
+                // The start-up load: wait until the block holds the file (it is zeroes before).
+                for (int i = 0; i < 600 && memcmp(block, vanilla.data(), kSkillDataSize) != 0; ++i) Sleep(100);
+                Log(L"gamepatch: modpack guard ready (skill data %s the game files)", memcmp(block, vanilla.data(), kSkillDataSize) == 0 ? L"matches" : L"differs from");
+                std::vector<uint8_t> modded, now(kSkillDataSize);
+                for (;;)
+                {
+                    Sleep(200);
+                    memcpy(now.data(), block, kSkillDataSize);
+                    if (modded.empty())
+                    {
+                        if (memcmp(now.data(), vanilla.data(), kSkillDataSize) == 0) continue;
+                        modded = now;
+                        Log(L"gamepatch: modpack loaded - its skill data will be kept until the game closes");
+                        continue;
+                    }
+                    if (memcmp(now.data(), modded.data(), kSkillDataSize) == 0) continue;
+                    // Of the bytes the mod changed, how many are vanilla again; and is anything new?
+                    size_t moddedBytes = 0, reverted = 0, otherChanges = 0;
+                    for (size_t i = 0; i < kSkillDataSize; ++i)
+                    {
+                        bool isMod = modded[i] != vanilla[i];
+                        if (isMod) { ++moddedBytes; if (now[i] == vanilla[i]) ++reverted; }
+                        if (now[i] != modded[i] && !(isMod && now[i] == vanilla[i])) ++otherChanges;
+                    }
+                    // A reload: many modded bytes (or most of them) vanilla again at once, little else new. A Skill Editor edit
+                    // that sets one value back to vanilla touches a few bytes and stays an edit.
+                    if (reverted && (reverted >= 64 || reverted * 2 >= moddedBytes) && otherChanges * 10 <= reverted)
+                    {
+                        for (size_t i = 0; i < kSkillDataSize; ++i) // only what reverted: anything else the game wrote stays
+                            if (modded[i] != vanilla[i] && now[i] == vanilla[i]) block[i] = modded[i];
+                        for (size_t i = 0; i < kSkillDataSize; ++i)
+                            if (!(modded[i] != vanilla[i] && now[i] == vanilla[i])) modded[i] = now[i];
+                        Log(L"gamepatch: skill data went back to vanilla (%zu of %zu modded bytes; menu %d, game state %d) - modpack put back",
+                            reverted, moddedBytes, CurrentMenu(MenuManager()), *reinterpret_cast<int32_t*>(At(0x1404bc950)));
+                    }
+                    else modded = now; // an edit (Skill Editor) or another modpack: the new modded state
+                }
+            }).detach();
+        }
+    }
+
     bool HookFileOpens()
     {
         static std::atomic<bool> done{ false };
@@ -3358,6 +3436,7 @@ namespace pdnet::gamepatches
             g_bodyTags = GetConfig().nametagsOnBodies ? 1 : 0;
             NametagsAlwaysOn();
             PartnerLock();
+            SkillDataGuard();
             if (NametagsOnBodies())
             {
                 DeadNametagColor(GetConfig().deadNametagColor);

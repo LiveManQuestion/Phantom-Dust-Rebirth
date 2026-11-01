@@ -712,8 +712,8 @@ namespace
     // "sha256 pdnet-update-<build>.zip <hex>" in its notes. At game start, before pdnet is injected, CheckForUpdate
     // looks for a higher build on this kit's channel (update_channel=stable|experimental|off; by default the kit's own
     // kind, and off for development builds; an Experimental kit on the stable channel goes back to the newest Stable), downloads it into pdnet\update\ (inside the kit folder, so the files get
-    // the folder's read access for the game's sandbox), checks the hash, backs up what it replaces in
-    // pdnet\update\backup\ and swaps the files in. eos.ini and pdnet.ini are never touched. A pdnet.dll that doesn't
+    // the folder's read access for the game's sandbox), checks the hash, moves what it replaces to
+    // pdnet\update\backup\ (put back if the swap fails) and swaps the files in; after a good swap pdnet\update\ is deleted. eos.ini and pdnet.ini are never touched. A pdnet.dll that doesn't
     // match kit-version.txt (a test build installed by hand) is left alone too.
 
     // GET https://<host><path> into `body`; false if it failed or wasn't 200.
@@ -830,8 +830,11 @@ namespace
         return MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING) != FALSE;
     }
 
+    void ClearOldUpdate();
+
     void CheckForUpdate()
     {
+        ClearOldUpdate();
         KitVersion kit = ReadKitVersion();
         std::wstring fallback = kit.label.find("Experimental") != std::string::npos ? L"experimental"
                               : kit.label.find("Stable") != std::string::npos ? L"stable" : L"off";
@@ -968,10 +971,21 @@ namespace
         {
             std::wstring setup = fresh + L"\\Setup.bat", parentSetup = g_dir + L"..\\Setup.bat";
             if (GetFileAttributesW(setup.c_str()) != INVALID_FILE_ATTRIBUTES && GetFileAttributesW(parentSetup.c_str()) != INVALID_FILE_ATTRIBUTES) Replace(setup, parentSetup);
-            Log(L"update: installed build %d (%zu files; the previous version is in pdnet\\update\\backup)", best, done.size());
+            Log(L"update: installed build %d (%zu files; the old files are deleted)", best, done.size());
         }
         DeleteTree(fresh);
         DeleteFileW(file.c_str());
+        if (!failed) DeleteTree(work); // the old pdlaunch.exe is still running: it goes at the next start (ClearOldUpdate)
+    }
+
+    // pdnet\update\ holds an update only while it is installed: anything left there (the previous pdlaunch.exe, which
+    // can't be deleted while it runs, or files of an interrupted update) is deleted at the next start.
+    void ClearOldUpdate()
+    {
+        std::wstring work = g_dir + L"update";
+        if (GetFileAttributesW(work.c_str()) == INVALID_FILE_ATTRIBUTES) return;
+        DeleteTree(work);
+        Log(L"update: old update files %s", GetFileAttributesW(work.c_str()) == INVALID_FILE_ATTRIBUTES ? L"deleted" : L"partly deleted (some still in use)");
     }
 
     // The game's LocalState folder (pdnet builds the same path, src\log.cpp).

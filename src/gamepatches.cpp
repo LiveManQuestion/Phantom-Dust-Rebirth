@@ -3224,11 +3224,19 @@ namespace pdnet::gamepatches
         void HookedCameraLock(uint8_t* lock)
         {
             reinterpret_cast<CameraLockFn>(At(0x14017b220))(lock);
+            static std::atomic<bool> seen{ false };
+            if (!seen.exchange(true)) Log(L"gamepatch: lock onto partner: camera hook running");
             if (!g_partnerLock && !g_partnerToggle) return;
             uint8_t* camera = *reinterpret_cast<uint8_t**>(lock + 0x10);
             uint8_t* player = camera ? *reinterpret_cast<uint8_t**>(camera + 8) : nullptr;
             int me = *reinterpret_cast<int32_t*>(At(0x1404bbe00));
-            if (!player || player != PlayerObject(me)) return; // only this PC's own player
+            if (!player || player != PlayerObject(me))
+            {
+                static std::atomic<int> told{ 0 };
+                if (g_partnerToggle && told++ < 8)
+                    Log(L"gamepatch: lock onto partner: camera of %p (lock %p), this PC's player %d is %p", player, lock, me, PlayerObject(me));
+                return; // only this PC's own player
+            }
             if (g_partnerToggle.exchange(false))
             {
                 bool on = !g_partnerLock;
@@ -3258,9 +3266,11 @@ namespace pdnet::gamepatches
         }
 
         // Presses: RB (GamepadButtons RightShoulder) on any controller, polled; the key from the game's window.
-        void PartnerPress()
+        void PartnerPress(const wchar_t* source)
         {
-            if (InMatch()) g_partnerToggle = true;
+            bool match = InMatch();
+            Log(L"gamepatch: lock onto partner: %s pressed%s", source, match ? L"" : L" (not in a match: ignored)");
+            if (match) g_partnerToggle = true;
         }
 
         void PartnerLock()
@@ -3289,7 +3299,7 @@ namespace pdnet::gamepatches
                     Sleep(16);
                     if (!InMatch()) { g_partnerLock = false; g_partnerToggle = false; held = false; continue; }
                     bool now = AnyPadHolds(0x800); // RightShoulder
-                    if (now && !held) PartnerPress();
+                    if (now && !held) PartnerPress(L"RB");
                     held = now;
                 }
             }).detach();
@@ -3317,7 +3327,7 @@ namespace pdnet::gamepatches
                         {
                             window.KeyDown([key](CoreWindow const&, KeyEventArgs const& e)
                             {
-                                if (static_cast<uint32_t>(e.VirtualKey()) == key && !e.KeyStatus().WasKeyDown) PartnerPress();
+                                if (static_cast<uint32_t>(e.VirtualKey()) == key && !e.KeyStatus().WasKeyDown) PartnerPress(L"key");
                             });
                             Log(L"gamepatch: lock onto partner: keyboard key 0x%02X", key);
                         }

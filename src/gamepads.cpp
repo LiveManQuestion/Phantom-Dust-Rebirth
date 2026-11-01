@@ -260,7 +260,11 @@ namespace pdnet
             for (const Gamepad& pad : PadFactory::g_osFactory.as<IGamepadStatics>().Gamepads())
                 if (static_cast<uint32_t>(pad.GetCurrentReading().Buttons) & buttons) return true;
         }
-        catch (...) {}
+        catch (...)
+        {
+            static std::atomic<int> told{ 0 };
+            if (told++ < 3) Log(L"gamepads: reading the Xbox controllers failed (0x%08X)", winrt::to_hresult());
+        }
         for (int slot = 0; slot < pads::kMaxPads; ++slot)
         {
             pads::Pad p{};

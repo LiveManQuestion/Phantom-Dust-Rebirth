@@ -49,7 +49,8 @@ namespace pdnet
         bool discordLobbyMessages = true;   // discord_lobby_messages=on|off: "opened" / "closed" messages
         bool discordPlayerMessages = true;  // discord_player_messages=on|off: "<name> joined / left" (and "full") messages
         std::wstring logWebhook;            // log_webhook=<URL>: where Options > Send Log uploads this PC's logs (see discord.h)
-        std::wstring updateChannel;         // update_channel=stable|experimental|off: which builds pdlaunch updates to (empty: the kit's own kind; Options > Updates)
+        uint32_t partnerLockKey = 0x09;     // partner_lock_key=Tab: keyboard key (Windows virtual-key code) that locks onto the Tag Team partner; none = 0 (controllers: RB)
+        std::wstring updateChannel;        // update_channel=stable|experimental|off: which builds pdlaunch updates to (empty: the kit's own kind; Options > Updates)
         std::wstring discordInvite;        // discord_invite=<URL>: the community Discord the main menu's Community button opens (see gamesave.cpp)
         int splashVolume = 40;              // splash_volume=: % of the remembered volume from the start-up logos until the main menu (pdlaunch; the Settings menu shows it)
         bool auraBeeps = true;              // aura_beeps=on|off: the aura particles' beeping (Options > Sound shows it)

@@ -48,6 +48,29 @@ namespace pdnet
             colour = 0xFF000000u | std::stoul(hex, nullptr, 16);
         }
 
+        // A key name as Windows virtual-key code: a letter or digit, F1-F24, a few named keys, or a number; 0 for none.
+        uint32_t KeyCode(const std::string& name)
+        {
+            if (name.empty() || _stricmp(name.c_str(), "none") == 0 || _stricmp(name.c_str(), "off") == 0) return 0;
+            if (name.size() == 1 && std::isalnum(static_cast<unsigned char>(name[0]))) return static_cast<uint32_t>(std::toupper(static_cast<unsigned char>(name[0])));
+            if ((name[0] == 'F' || name[0] == 'f') && name.size() <= 3 && std::all_of(name.begin() + 1, name.end(), ::isdigit))
+            {
+                int n = atoi(name.c_str() + 1);
+                if (n >= 1 && n <= 24) return 0x6F + n; // VK_F1 = 0x70
+            }
+            static const std::pair<const char*, uint32_t> kNames[] = {
+                { "Tab", 0x09 }, { "Space", 0x20 }, { "Enter", 0x0D }, { "Shift", 0x10 }, { "Ctrl", 0x11 }, { "Control", 0x11 },
+                { "Alt", 0x12 }, { "CapsLock", 0x14 }, { "Backspace", 0x08 }, { "Insert", 0x2D }, { "Delete", 0x2E }, { "Home", 0x24 },
+                { "End", 0x23 }, { "PageUp", 0x21 }, { "PageDown", 0x22 }, { "Up", 0x26 }, { "Down", 0x28 }, { "Left", 0x25 },
+                { "Right", 0x27 }, { "LeftShift", 0xA0 }, { "RightShift", 0xA1 }, { "LeftCtrl", 0xA2 }, { "RightCtrl", 0xA3 },
+            };
+            for (auto& [n, code] : kNames)
+                if (_stricmp(name.c_str(), n) == 0) return code;
+            if (std::all_of(name.begin(), name.end(), ::isdigit)) return static_cast<uint32_t>(atoi(name.c_str()));
+            Log(L"config: key '%S' not known - partner_lock_key stays as it was", name.c_str());
+            return ~0u;
+        }
+
         // The top of settings.ini. Files written before the second line existed get it on their next save.
         constexpr char kSettingsHeader[] = "; pdnet settings saved from the game's Settings menu (they override pdnet.ini)";
         constexpr char kSettingsHelp[] = "; You can edit this file by hand with the game closed. Colours take any hex code (RRGGBB), e.g. 7FFFD4.";
@@ -103,7 +126,8 @@ namespace pdnet
                 else if (key == "name_trace") c.nameTrace = _stricmp(value.c_str(), "memory") == 0 ? 1 : (_stricmp(value.c_str(), "draw") == 0 || _stricmp(value.c_str(), "on") == 0) ? 2 : 0;
                 else if (key == "discord_webhook") c.discordWebhook = std::wstring(value.begin(), value.end());
                 else if (key == "log_webhook") c.logWebhook = std::wstring(value.begin(), value.end());
-                else if (key == "update_channel") c.updateChannel = std::wstring(value.begin(), value.end());
+                else if (key == "partner_lock_key") { if (uint32_t code = KeyCode(value); code != ~0u) c.partnerLockKey = code; }
+                else if (key == "update_channel")c.updateChannel = std::wstring(value.begin(), value.end());
                 else if (key == "discord_invite")c.discordInvite = std::wstring(value.begin(), value.end());
                 else if (key == "discord_lobby_messages") c.discordLobbyMessages = _stricmp(value.c_str(), "off") != 0;
                 else if (key == "discord_player_messages") c.discordPlayerMessages = _stricmp(value.c_str(), "off") != 0;

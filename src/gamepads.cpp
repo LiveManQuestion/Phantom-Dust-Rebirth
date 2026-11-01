@@ -252,6 +252,23 @@ namespace pdnet
         };
     }
 
+    bool AnyPadHolds(uint32_t buttons)
+    {
+        if (!PadFactory::g_osFactory) return false;
+        try
+        {
+            for (const Gamepad& pad : PadFactory::g_osFactory.as<IGamepadStatics>().Gamepads())
+                if (static_cast<uint32_t>(pad.GetCurrentReading().Buttons) & buttons) return true;
+        }
+        catch (...) {}
+        for (int slot = 0; slot < pads::kMaxPads; ++slot)
+        {
+            pads::Pad p{};
+            if (ReadPad(slot, p) && (p.buttons & buttons)) return true;
+        }
+        return false;
+    }
+
     winrt::Windows::Foundation::IInspectable CreateGamepadFactory(const winrt::Windows::Foundation::IActivationFactory& real)
     {
         Log(L"gamepads: the game's Gamepad class is pdnet's (Xbox controllers from Windows, others from pdlaunch / SDL3)");

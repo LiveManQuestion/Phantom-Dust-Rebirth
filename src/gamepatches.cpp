@@ -6,6 +6,7 @@
 #include "discord.h"
 #include "log.h"
 #include "rebirth_word.h"
+#include "gamepads.h"
 #include <fstream>
 #include <winrt/Windows.ApplicationModel.Core.h>
 #include <winrt/Windows.UI.Core.h>
@@ -3180,6 +3181,145 @@ namespace pdnet::gamepatches
         }
     }
 
+    namespace
+    {
+        // Lock onto partner: RB on a controller, or the partner_lock_key key, switches between the game's own target and
+        // this player's teammate (the game's Options > Lock Onto Partner only lets switch-target cycle through them).
+        // The lock target lives in the camera (player object +0x142d0): each frame FUN_1401775b0 calls FUN_14017b220
+        // (camera +0x138, "lock"), which runs the camera's lock script, then copies the target slot (lock +0xc) into the
+        // player's +0x13f20 (that player's id, record +0x60) and +0x13f1c (distance band 1-3). That one call (0x140177616)
+        // goes through HookedCameraLock, which sets the partner afterwards while partner lock is on.
+        using CameraLockFn = void (*)(uint8_t* lock);
+        std::atomic<bool> g_partnerLock{ false };   // on: this player's lock target is the partner
+        std::atomic<bool> g_partnerToggle{ false }; // a press waiting for the game thread
+
+        bool InMatch()
+        {
+            int32_t state = *reinterpret_cast<volatile int32_t*>(At(0x1404bc950));
+            return state != 0 && state != 13;
+        }
+
+        uint8_t* PlayerObject(int slot) { return slot >= 0 && slot < 4 ? reinterpret_cast<uint8_t**>(At(0x1404bc9d8))[slot] : nullptr; }
+        uint8_t* PlayerRecord(int slot) { return slot >= 0 && slot < 4 ? reinterpret_cast<uint8_t**>(At(0x1404bc608))[slot] : nullptr; }
+
+        // The other living player on this player's team (team = object +0x1c, 0 or 1; FUN_140187180), or -1.
+        int PartnerSlot(int me)
+        {
+            uint8_t* mine = PlayerObject(me);
+            if (!mine || *reinterpret_cast<int32_t*>(mine + 0x10) != 0) return -1;
+            uint32_t team = *reinterpret_cast<uint32_t*>(mine + 0x1c);
+            if (team >= 2) return -1;
+            for (int s = 0; s < 4; ++s)
+            {
+                uint8_t* other = PlayerObject(s);
+                uint8_t* record = PlayerRecord(s);
+                if (s == me || !other || !record || *reinterpret_cast<int32_t*>(other + 0x10) != 0) continue;
+                if (*reinterpret_cast<uint32_t*>(other + 0x1c) == team && *reinterpret_cast<int32_t*>(record + 0xc) > 0) return s;
+            }
+            return -1;
+        }
+
+        void HookedCameraLock(uint8_t* lock)
+        {
+            reinterpret_cast<CameraLockFn>(At(0x14017b220))(lock);
+            if (!g_partnerLock && !g_partnerToggle) return;
+            uint8_t* camera = *reinterpret_cast<uint8_t**>(lock + 0x10);
+            uint8_t* player = camera ? *reinterpret_cast<uint8_t**>(camera + 8) : nullptr;
+            int me = *reinterpret_cast<int32_t*>(At(0x1404bbe00));
+            if (!player || player != PlayerObject(me)) return; // only this PC's own player
+            if (g_partnerToggle.exchange(false))
+            {
+                bool on = !g_partnerLock;
+                if (on && PartnerSlot(me) < 0) Log(L"gamepatch: lock onto partner - no partner here");
+                else
+                {
+                    g_partnerLock = on;
+                    Log(L"gamepatch: lock onto partner %s", on ? L"on" : L"off (the game's own target again)");
+                }
+            }
+            if (!g_partnerLock || *reinterpret_cast<int32_t*>(At(0x1404bc9d4)) == 1 || *reinterpret_cast<int32_t*>(lock + 0x18) == 0) return;
+            int partner = PartnerSlot(me);
+            if (partner < 0)
+            {
+                g_partnerLock = false;
+                Log(L"gamepatch: lock onto partner off - the partner is gone or down");
+                return;
+            }
+            uint8_t* record = PlayerRecord(partner);
+            *reinterpret_cast<int32_t*>(lock + 0xc) = partner;
+            *reinterpret_cast<int32_t*>(player + 0x13f20) = *reinterpret_cast<int32_t*>(record + 0x60);
+            // The distance band as FUN_14017b220 works it out (distance table 0x1404bbe20, limits 0x1402f8040 / 0x1402f8138).
+            float distance = *reinterpret_cast<float*>(At(0x1404bbe20) + (static_cast<int64_t>(*reinterpret_cast<int32_t*>(record + 4)) +
+                                                                          static_cast<int64_t>(*reinterpret_cast<int32_t*>(player + 0x44)) * 4) * 8 + 4);
+            float nearLimit = *reinterpret_cast<float*>(At(0x1402f8040)), farLimit = *reinterpret_cast<float*>(At(0x1402f8138));
+            *reinterpret_cast<int32_t*>(player + 0x13f1c) = distance <= nearLimit ? 1 : (farLimit < distance ? 3 : 2);
+        }
+
+        // Presses: RB (GamepadButtons RightShoulder) on any controller, polled; the key from the game's window.
+        void PartnerPress()
+        {
+            if (InMatch()) g_partnerToggle = true;
+        }
+
+        void PartnerLock()
+        {
+            uint8_t* site = At(0x140177616);
+            uint8_t* cave = CodeCave(16);
+            if (site[0] != 0xe8 || site + 5 + *reinterpret_cast<int32_t*>(site + 1) != At(0x14017b220) || !cave)
+            {
+                Log(L"gamepatch: lock onto partner skipped - the game code is not what this pdnet expects");
+                return;
+            }
+            std::vector<uint8_t> toHook = { 0xff, 0x25, 0x00, 0x00, 0x00, 0x00 }; // jmp [rip+0]
+            Put64(toHook, reinterpret_cast<uint64_t>(&HookedCameraLock));
+            std::vector<uint8_t> call = { 0xe8 };
+            Put32(call, Rel32(site + 5, cave));
+            if (!Write(cave, toHook) || !Write(site, call))
+            {
+                Log(L"gamepatch: lock onto partner failed (VirtualProtect error %lu)", GetLastError());
+                return;
+            }
+            std::thread([]
+            {
+                bool held = false;
+                for (;;)
+                {
+                    Sleep(16);
+                    if (!InMatch()) { g_partnerLock = false; g_partnerToggle = false; held = false; continue; }
+                    bool now = AnyPadHolds(0x800); // RightShoulder
+                    if (now && !held) PartnerPress();
+                    held = now;
+                }
+            }).detach();
+            uint32_t key = GetConfig().partnerLockKey;
+            if (key) std::thread([key]
+            {
+                // The game's window exists only once the game is up: subscribe when it can be had.
+                for (int attempt = 0; attempt < 120; ++attempt, Sleep(1000))
+                {
+                    try
+                    {
+                        using namespace winrt::Windows::UI::Core;
+                        auto window = winrt::Windows::ApplicationModel::Core::CoreApplication::MainView().CoreWindow();
+                        if (!window) continue;
+                        window.Dispatcher().RunAsync(CoreDispatcherPriority::Normal, [window, key]
+                        {
+                            window.KeyDown([key](CoreWindow const&, KeyEventArgs const& e)
+                            {
+                                if (static_cast<uint32_t>(e.VirtualKey()) == key && !e.KeyStatus().WasKeyDown) PartnerPress();
+                            });
+                        });
+                        Log(L"gamepatch: lock onto partner: keyboard key 0x%02X", key);
+                        return;
+                    }
+                    catch (...) {}
+                }
+                Log(L"gamepatch: lock onto partner: no keyboard (the game's window never came)");
+            }).detach();
+            Log(L"gamepatch: lock onto partner ready (RB%s)", key ? L" or the partner_lock_key key" : L"");
+        }
+    }
+
     bool HookFileOpens()
     {
         static std::atomic<bool> done{ false };
@@ -3198,6 +3338,7 @@ namespace pdnet::gamepatches
             if (!HookFileOpens()) Log(L"gamepatch: title screen: CreateFile2 import not found");
             g_bodyTags = GetConfig().nametagsOnBodies ? 1 : 0;
             NametagsAlwaysOn();
+            PartnerLock();
             if (NametagsOnBodies())
             {
                 DeadNametagColor(GetConfig().deadNametagColor);

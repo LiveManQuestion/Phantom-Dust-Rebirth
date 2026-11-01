@@ -2654,6 +2654,7 @@ namespace pdnet::gamepatches
             size_t n = strlen(state);
             g_soundWindow = n >= 4 && strcmp(state + n - 4, "SOUN") == 0;
         }
+        void SubscribePartnerKeyOnce(); // lock onto partner's keyboard key (below)
         int64_t HookedSetState(int64_t* args)
         {
             NoteState(args);
@@ -2662,6 +2663,7 @@ namespace pdnet::gamepatches
             int64_t result = g_setState(args);
             CheckSendLogPick(event);
             OpenPendingTestArsenal(event);
+            SubscribePartnerKeyOnce();
             return result;
         }
         int64_t HookedSetState12(int64_t* args) { NoteState(args); return g_setState12(args); }
@@ -3292,31 +3294,38 @@ namespace pdnet::gamepatches
                 }
             }).detach();
             uint32_t key = GetConfig().partnerLockKey;
-            if (key) std::thread([key]
+            Log(L"gamepatch: lock onto partner ready (RB%s)", key ? L" or the partner_lock_key key, once the menus run" : L"");
+        }
+
+        // The key comes from the game's window (KeyDown). Subscribing from pdnet's own thread right at injection crashed the
+        // game at start-up (Experimental 94: a WinRT error in the window's thread, twinapi.appcore 0xc000027b), so it is done
+        // once from the game's thread when its menus run (HookedSetState), like the Settings name typing, errors caught.
+        void SubscribePartnerKeyOnce()
+        {
+            static std::once_flag once;
+            uint32_t key = GetConfig().partnerLockKey;
+            if (!key) return;
+            std::call_once(once, [key]
             {
-                // The game's window exists only once the game is up: subscribe when it can be had.
-                for (int attempt = 0; attempt < 120; ++attempt, Sleep(1000))
+                try
                 {
-                    try
+                    using namespace winrt::Windows::UI::Core;
+                    auto window = winrt::Windows::ApplicationModel::Core::CoreApplication::MainView().CoreWindow();
+                    window.Dispatcher().RunAsync(CoreDispatcherPriority::Normal, [window, key]
                     {
-                        using namespace winrt::Windows::UI::Core;
-                        auto window = winrt::Windows::ApplicationModel::Core::CoreApplication::MainView().CoreWindow();
-                        if (!window) continue;
-                        window.Dispatcher().RunAsync(CoreDispatcherPriority::Normal, [window, key]
+                        try
                         {
                             window.KeyDown([key](CoreWindow const&, KeyEventArgs const& e)
                             {
                                 if (static_cast<uint32_t>(e.VirtualKey()) == key && !e.KeyStatus().WasKeyDown) PartnerPress();
                             });
-                        });
-                        Log(L"gamepatch: lock onto partner: keyboard key 0x%02X", key);
-                        return;
-                    }
-                    catch (...) {}
+                            Log(L"gamepatch: lock onto partner: keyboard key 0x%02X", key);
+                        }
+                        catch (...) { Log(L"gamepatch: lock onto partner: no keyboard (0x%08X)", winrt::to_hresult()); }
+                    });
                 }
-                Log(L"gamepatch: lock onto partner: no keyboard (the game's window never came)");
-            }).detach();
-            Log(L"gamepatch: lock onto partner ready (RB%s)", key ? L" or the partner_lock_key key" : L"");
+                catch (...) { Log(L"gamepatch: lock onto partner: no keyboard (0x%08X)", winrt::to_hresult()); }
+            });
         }
     }
 

@@ -5,6 +5,7 @@
 #   ./setup-linux.sh                  install Phantom Dust if needed, then set up pdnet (asks for your player name)
 #   ./setup-linux.sh --name NAME      same, without asking
 #   ./setup-linux.sh --iso FILE       use this Windows 11 ISO if wine-uwp isn't set up yet
+#   ./setup-linux.sh --update         update this kit to the newest pdnet build (Windows kits do it at game start)
 #   ./setup-linux.sh --remove         stop using pdnet (your pdnet saves are kept)
 #   ./setup-linux.sh --logs           copy the logs to your home folder, to send after a test
 #
@@ -30,7 +31,8 @@ while [ $# -gt 0 ]; do
         --iso) iso=${2:?--iso needs a file}; shift ;;
         --remove) action=remove ;;
         --logs) action=logs ;;
-        -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --update) action=update ;;
+        -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) fail "unknown option $1 (see --help)" ;;
     esac
     shift
@@ -82,7 +84,7 @@ download_wine_uwp() {
     fi
     say "wine-uwp installed in $dest/wine-uwp."
 }
-[ -n "$wup" ] || [ $action != setup ] || download_wine_uwp
+[ -n "$wup" ] || [ $action = remove ] || [ $action = logs ] || download_wine_uwp
 if [ -z "$wup" ]; then
     [ -n "$old" ] && fail "your wine-uwp ($old) is too old to load pdnet. Run this without --remove/--logs to update it, or set WINE_UWP=/path/to/bin/wine-uwp."
     fail "wine-uwp was not found. Run this without --remove/--logs to download it, or set WINE_UWP=/path/to/bin/wine-uwp."
@@ -103,6 +105,10 @@ find_game() {
 game=$(find_game)
 running() { pgrep -x PDUWP.exe >/dev/null 2>&1; }
 pdlog="$data/prefix/drive_c/users/$USER/AppData/Local/Packages/$family/LocalState/pdnet.log"
+previous_name=""
+[ -n "$game" ] && [ -f "$game/pdnet.ini" ] &&
+    previous_name=$(sed -n 's/^\xEF\xBB\xBF//; s/^display_name=//p' "$game/pdnet.ini" | tr -d '\r' | head -1)
+[ "$previous_name" = Player ] && previous_name=""
 
 # --- --logs ---------------------------------------------------------------------------------------------------------
 if [ $action = logs ]; then
@@ -126,6 +132,104 @@ if [ $action = remove ]; then
     fi
     say "pdnet removed. Phantom Dust starts with Xbox Live again. (pdnet's saves are kept, in its LocalState\\pdnet folder.)"
     exit 0
+fi
+
+# --- --update -------------------------------------------------------------------------------------------------------
+# What pdlaunch.exe does at game start on Windows (launcher/pdlaunch.cpp, CheckForUpdate): the newest
+# pdnet-update-<build>.zip on this kit's channel from the GitHub releases, checked against the "sha256 <zip> <hex>" line
+# in its notes, replaces the kit's files except eos.ini and pdnet.ini (old ones kept in update/backup until it worked).
+# Then the updated kit is set up again, which copies the new pdnet into the game.
+if [ $action = update ]; then
+    running && fail "close Phantom Dust first."
+    command -v curl >/dev/null || fail "curl is needed to update."
+    command -v python3 >/dev/null || fail "python3 is needed to update."
+    [ -f "$kit/kit-version.txt" ] || fail "kit-version.txt is missing from $kit, so this kit's build is unknown."
+    kv() { sed -n "$1" "$kit/kit-version.txt" | tr -d '\r' | sed 's/^\xEF\xBB\xBF//' | head -1; }
+    label=$(kv 1p); build=$(kv 's/^Build: //p'); want_md5=$(kv 's/^pdnet\.dll MD5 //p' | tr 'A-F' 'a-f')
+    case $label in *Experimental*) channel=experimental ;; *Stable*) channel=stable ;; *) channel=off ;; esac
+    # update_channel: the kit's pdnet.ini, the game's copy, then the file in-game Options > Updates writes (later wins)
+    for f in "$kit/pdnet.ini" "$game/pdnet.ini" "$data/prefix/drive_c/users/$USER/AppData/Local/Packages/$family/LocalState/pdnet/settings.ini"; do
+        c=$(sed -n 's/^\xEF\xBB\xBF//; s/^update_channel=//p' "$f" 2>/dev/null | tr -d '\r' | tail -1 || true)
+        if [ -n "$c" ]; then channel=$c; fi
+    done
+    channel=$(printf '%s' "$channel" | tr 'A-Z' 'a-z')
+    [ "$channel" = off ] && { say "Updates are off for this kit (update_channel=off, or a development build)."; exit 0; }
+    have_md5=$(md5sum "$kit/pdnet.dll" | cut -c1-8)
+    [ -z "$want_md5" ] || [ "$have_md5" = "$want_md5" ] ||
+        fail "this kit's pdnet.dll isn't the one its kit-version.txt names (a build put in by hand), so it isn't updated."
+
+    repo=$(sed -n 's/^\xEF\xBB\xBF//; s/^update_repo=//p' "$kit/pdnet.ini" 2>/dev/null | tr -d '\r' | tail -1 || true)
+    repo=${repo:-SnowRyze/Phantom-Dust-Rebirth}
+    say "This kit: ${label:-unknown} (build ${build:-?}), $channel channel. Checking github.com/$repo..."
+    json=$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$repo/releases?per_page=30") ||
+        fail "GitHub could not be reached."
+    pick=$(printf '%s' "$json" | python3 -I -c '
+import json, re, sys
+channel, build, label = sys.argv[1], int(sys.argv[2] or 0), sys.argv[3]
+best = None
+for rel in json.load(sys.stdin):
+    if rel.get("prerelease") and channel != "experimental":
+        continue
+    for a in rel.get("assets", []):
+        m = re.fullmatch(r"pdnet-update-(\d+)\.zip", a.get("name", ""))
+        if m and (best is None or int(m.group(1)) > best[0]):
+            best = (int(m.group(1)), a["browser_download_url"], a["name"], rel.get("body") or "")
+# on the stable channel a kit that is not a Stable goes back to the newest Stable, even with a lower build number
+revert = channel != "experimental" and "Stable" not in label
+if best is None:
+    print("none"); sys.exit()
+if (best[0] == build) if revert else (best[0] <= build):
+    print("current", best[0]); sys.exit()
+m = re.search(r"sha256 " + re.escape(best[2]) + r" ([0-9a-fA-F]{64})", best[3])
+print("update", best[0], best[1], m.group(1).lower() if m else "-", "revert" if revert else "newer")
+' "$channel" "${build:-0}" "$label") || fail "could not read GitHub's answer."
+    set -- $pick
+    case $1 in
+        none) fail "no update is published on the $channel channel yet." ;;
+        current)
+            say "Up to date (build ${build:-?})."
+            if [ -n "$game" ] && [ -f "$game/pdnet.dll" ] && ! cmp -s "$kit/pdnet.dll" "$game/pdnet.dll"; then
+                say "The game has a different pdnet.dll than this kit; setting the kit up again."
+                exec bash "$kit/setup-linux.sh" ${previous_name:+--name "$previous_name"}
+            fi
+            exit 0 ;;
+    esac
+    new_build=$2 url=$3 sum=$4
+    [ "$5" = revert ] && say "Stable channel: going back to the newest Stable build ($new_build)."
+    [ "$sum" != - ] || fail "build $new_build has no sha256 line in its release notes, so it isn't installed."
+    say "Downloading build $new_build..."
+    dl_tmp=$(mktemp -d)
+    trap 'rm -rf "$dl_tmp"' EXIT
+    curl -fL --progress-bar -o "$dl_tmp/update.zip" "$url" || fail "download failed ($url)."
+    [ "$(sha256sum "$dl_tmp/update.zip" | cut -d' ' -f1)" = "$sum" ] || fail "the download is damaged (sha256 mismatch); nothing was changed."
+    python3 -I -m zipfile -e "$dl_tmp/update.zip" "$dl_tmp/new" && [ -f "$dl_tmp/new/pdnet/pdnet.dll" ] ||
+        fail "could not unpack build $new_build; nothing was changed."
+
+    # Swap the files in by renaming (a running script keeps reading its old copy), keeping the old ones until done.
+    backup="$kit/update/backup"
+    rm -rf "$kit/update"; mkdir -p "$backup"
+    done_files=() failed=""
+    for f in "$dl_tmp/new/pdnet/"*; do
+        n=$(basename "$f")
+        [ -f "$f" ] || continue
+        case $n in eos.ini|pdnet.ini) continue ;; esac
+        if [ -e "$kit/$n" ]; then mv -f "$kit/$n" "$backup/$n" || { failed=$n; break; }; fi
+        mv -f "$f" "$kit/$n" || { failed=$n; [ -e "$backup/$n" ] && mv -f "$backup/$n" "$kit/$n"; break; }
+        done_files+=("$n")
+    done
+    if [ -n "$failed" ]; then
+        for n in "${done_files[@]}"; do if [ -e "$backup/$n" ]; then mv -f "$backup/$n" "$kit/$n"; fi; done
+        fail "replacing $failed failed; the old kit is back."
+    fi
+    [ -f "$dl_tmp/new/Setup.bat" ] && [ -f "$kit/../Setup.bat" ] && mv -f "$dl_tmp/new/Setup.bat" "$kit/../Setup.bat"
+    rm -rf "$kit/update"
+    say "Kit updated to build $new_build."
+    if [ -z "$game" ]; then
+        say "Phantom Dust isn't installed yet: run bash $kit/setup-linux.sh to install it and set up pdnet."
+        exit 0
+    fi
+    # the new kit's own setup copies the new files into the game (same name as before)
+    exec bash "$kit/setup-linux.sh" ${previous_name:+--name "$previous_name"}
 fi
 
 # --- check the kit --------------------------------------------------------------------------------------------------
@@ -181,9 +285,7 @@ if [ -f "$game/Microsoft.Xbox.Services.orig.dll" ]; then
 fi
 
 # --- name -----------------------------------------------------------------------------------------------------------
-previous=""
-[ -f "$game/pdnet.ini" ] && previous=$(sed -n 's/^\xEF\xBB\xBF//; s/^display_name=//p' "$game/pdnet.ini" | tr -d '\r' | head -1)
-[ "$previous" = Player ] && previous=""
+previous=$previous_name
 tries=0
 while [ -z "$name" ] && [ $tries -lt 3 ]; do
     prompt="Your player name (what the other players will see, max 32 characters)"
@@ -213,3 +315,4 @@ say "Set up as '$name'. Start Phantom Dust with:"
 say "  $wup run $(basename "$game")"
 say "The first title screen should say \"Rebirth\". Your Xbox profile doesn't show while pdnet is on: make a new one."
 say "After a test: $0 --logs     To stop using pdnet: $0 --remove"
+say "Updates: run $0 --update now and then (Windows kits update themselves at game start; Linux ones don't)."

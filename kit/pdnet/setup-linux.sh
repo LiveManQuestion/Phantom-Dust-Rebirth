@@ -108,6 +108,7 @@ pdlog="$data/prefix/drive_c/users/$USER/AppData/Local/Packages/$family/LocalStat
 previous_name=""
 [ -n "$game" ] && [ -f "$game/pdnet.ini" ] &&
     previous_name=$(sed -n 's/^\xEF\xBB\xBF//; s/^display_name=//p' "$game/pdnet.ini" | tr -d '\r' | head -1)
+keep_name=$previous_name   # what --update passes on, "Player" included
 [ "$previous_name" = Player ] && previous_name=""
 
 # --- --logs ---------------------------------------------------------------------------------------------------------
@@ -190,7 +191,7 @@ print("update", best[0], best[1], m.group(1).lower() if m else "-", "revert" if 
             say "Up to date (build ${build:-?})."
             if [ -n "$game" ] && [ -f "$game/pdnet.dll" ] && ! cmp -s "$kit/pdnet.dll" "$game/pdnet.dll"; then
                 say "The game has a different pdnet.dll than this kit; setting the kit up again."
-                exec bash "$kit/setup-linux.sh" ${previous_name:+--name "$previous_name"}
+                exec bash "$kit/setup-linux.sh" ${keep_name:+--name "$keep_name"}
             fi
             exit 0 ;;
     esac
@@ -229,7 +230,7 @@ print("update", best[0], best[1], m.group(1).lower() if m else "-", "revert" if 
         exit 0
     fi
     # the new kit's own setup copies the new files into the game (same name as before)
-    exec bash "$kit/setup-linux.sh" ${previous_name:+--name "$previous_name"}
+    exec bash "$kit/setup-linux.sh" ${keep_name:+--name "$keep_name"}
 fi
 
 # --- check the kit --------------------------------------------------------------------------------------------------

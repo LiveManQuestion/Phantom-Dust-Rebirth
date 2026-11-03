@@ -3079,11 +3079,14 @@ namespace pdnet::gamepatches
     {
         // Lock onto partner: RB on a controller, or the partner_lock_key key, switches between the game's own target and
         // this player's teammate (the game's Options > Lock Onto Partner only lets switch-target cycle through them).
-        // The lock target lives in the camera (player object +0x142d0): each frame FUN_1401775b0 calls FUN_14017b220
-        // (camera +0x138, "lock"), which runs the camera's lock script, then copies the target slot (lock +0xc) into the
-        // player's +0x13f20 (that player's id, record +0x60) and +0x13f1c (distance band 1-3). That one call (0x140177616)
-        // goes through HookedCameraLock, which sets the partner afterwards while partner lock is on.
-        using CameraLockFn = void (*)(uint8_t* lock);
+        // A human player's target is the block at player object +0x13f10 (FUN_14024ec80 -> FUN_140252a20 each frame,
+        // the call at 0x14024f120): +0x10 is the target, an index into the targetable objects DAT_1404bcb50 (32, each
+        // with the player's status record at +0xb8), +0xc the distance band, +0x300 the player. FUN_1402531d0 inside
+        // keeps a target only while FUN_1402543e0 accepts it, which refuses teammates unless the option byte
+        // 0x14052dfb9 (Lock Onto Partner) is set. HookedTargetUpdate sets the partner as target and that byte for the
+        // update, while partner lock is on. (Experimental 94-96 hooked FUN_1401775b0's call instead: that is the AI's
+        // targeting, run only for computer players - it never ran for the player in an online match.)
+        using TargetUpdateFn = void (*)(uint8_t* target);
         std::atomic<bool> g_partnerLock{ false };   // on: this player's lock target is the partner
         std::atomic<bool> g_partnerToggle{ false }; // a press waiting for the game thread
 
@@ -3113,22 +3116,28 @@ namespace pdnet::gamepatches
             return -1;
         }
 
-        void HookedCameraLock(uint8_t* lock)
+        // The partner's index among the targetable objects (DAT_1404bcb50, whose +0xb8 is the player's status record), or -1.
+        int PartnerTarget(int partner)
         {
-            reinterpret_cast<CameraLockFn>(At(0x14017b220))(lock);
-            static std::atomic<bool> seen{ false };
-            if (!seen.exchange(true)) Log(L"gamepatch: lock onto partner: camera hook running");
-            if (!g_partnerLock && !g_partnerToggle) return;
-            uint8_t* camera = *reinterpret_cast<uint8_t**>(lock + 0x10);
-            uint8_t* player = camera ? *reinterpret_cast<uint8_t**>(camera + 8) : nullptr;
-            int me = *reinterpret_cast<int32_t*>(At(0x1404bbe00));
-            if (!player || player != PlayerObject(me))
+            uint8_t* object = PlayerObject(partner);
+            uint8_t* record = PlayerRecord(partner);
+            uint8_t** targets = reinterpret_cast<uint8_t**>(At(0x1404bcb50));
+            for (int i = 0; i < 32; ++i)
             {
-                static std::atomic<int> told{ 0 };
-                if (g_partnerToggle && told++ < 8)
-                    Log(L"gamepatch: lock onto partner: camera of %p (lock %p), this PC's player %d is %p", player, lock, me, PlayerObject(me));
-                return; // only this PC's own player
+                uint8_t* status = targets[i] ? *reinterpret_cast<uint8_t**>(targets[i] + 0xb8) : nullptr;
+                if (status && (status == record || (object && status == object + 0x40))) return i;
             }
+            return -1;
+        }
+
+        void HookedTargetUpdate(uint8_t* target)
+        {
+            auto original = reinterpret_cast<TargetUpdateFn>(At(0x140252a20));
+            uint8_t* player = *reinterpret_cast<uint8_t**>(target + 0x300);
+            int me = *reinterpret_cast<int32_t*>(At(0x1404bbe00));
+            if ((!g_partnerLock && !g_partnerToggle) || !player || player != PlayerObject(me)) return original(target);
+            static std::atomic<bool> seen{ false };
+            if (!seen.exchange(true)) Log(L"gamepatch: lock onto partner: target hook running for this PC's player %d", me);
             if (g_partnerToggle.exchange(false))
             {
                 bool on = !g_partnerLock;
@@ -3137,24 +3146,25 @@ namespace pdnet::gamepatches
                 {
                     g_partnerLock = on;
                     Log(L"gamepatch: lock onto partner %s", on ? L"on" : L"off (the game's own target again)");
+                    if (!on) *reinterpret_cast<int32_t*>(target + 0x10) = -1; // the game picks its own target again
                 }
             }
-            if (!g_partnerLock || *reinterpret_cast<int32_t*>(At(0x1404bc9d4)) == 1 || *reinterpret_cast<int32_t*>(lock + 0x18) == 0) return;
-            int partner = PartnerSlot(me);
-            if (partner < 0)
+            if (!g_partnerLock) return original(target);
+            int partner = PartnerSlot(me), index = partner < 0 ? -1 : PartnerTarget(partner);
+            if (index < 0)
             {
                 g_partnerLock = false;
+                *reinterpret_cast<int32_t*>(target + 0x10) = -1;
                 Log(L"gamepatch: lock onto partner off - the partner is gone or down");
-                return;
+                return original(target);
             }
-            uint8_t* record = PlayerRecord(partner);
-            *reinterpret_cast<int32_t*>(lock + 0xc) = partner;
-            *reinterpret_cast<int32_t*>(player + 0x13f20) = *reinterpret_cast<int32_t*>(record + 0x60);
-            // The distance band as FUN_14017b220 works it out (distance table 0x1404bbe20, limits 0x1402f8040 / 0x1402f8138).
-            float distance = *reinterpret_cast<float*>(At(0x1404bbe20) + (static_cast<int64_t>(*reinterpret_cast<int32_t*>(record + 4)) +
-                                                                          static_cast<int64_t>(*reinterpret_cast<int32_t*>(player + 0x44)) * 4) * 8 + 4);
-            float nearLimit = *reinterpret_cast<float*>(At(0x1402f8040)), farLimit = *reinterpret_cast<float*>(At(0x1402f8138));
-            *reinterpret_cast<int32_t*>(player + 0x13f1c) = distance <= nearLimit ? 1 : (farLimit < distance ? 3 : 2);
+            *reinterpret_cast<int32_t*>(target + 0x10) = index;
+            volatile uint8_t* allowPartner = At(0x14052dfb9);
+            uint8_t saved = *allowPartner;
+            *allowPartner = 1; // teammates count as targets for this update only
+            original(target);
+            *allowPartner = saved;
+            *reinterpret_cast<int32_t*>(target + 0x10) = index; // even if the switch-target button moved it on
         }
 
         // Presses: RB (GamepadButtons RightShoulder) on any controller, polled; the key from the game's window.
@@ -3167,15 +3177,15 @@ namespace pdnet::gamepatches
 
         void PartnerLock()
         {
-            uint8_t* site = At(0x140177616);
+            uint8_t* site = At(0x14024f120);
             uint8_t* cave = CodeCave(16);
-            if (site[0] != 0xe8 || site + 5 + *reinterpret_cast<int32_t*>(site + 1) != At(0x14017b220) || !cave)
+            if (site[0] != 0xe8 || site + 5 + *reinterpret_cast<int32_t*>(site + 1) != At(0x140252a20) || !cave)
             {
                 Log(L"gamepatch: lock onto partner skipped - the game code is not what this pdnet expects");
                 return;
             }
             std::vector<uint8_t> toHook = { 0xff, 0x25, 0x00, 0x00, 0x00, 0x00 }; // jmp [rip+0]
-            Put64(toHook, reinterpret_cast<uint64_t>(&HookedCameraLock));
+            Put64(toHook, reinterpret_cast<uint64_t>(&HookedTargetUpdate));
             std::vector<uint8_t> call = { 0xe8 };
             Put32(call, Rel32(site + 5, cave));
             if (!Write(cave, toHook) || !Write(site, call))

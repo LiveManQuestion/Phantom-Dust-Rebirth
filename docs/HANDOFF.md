@@ -508,7 +508,7 @@ for non-hosts, Quick Join (non-Quick lobbies; Quick only without a usable arsena
 (Experimental 75), the EOS clock correction (joins with a wrong PC clock), and controllers other than Xbox
 (Experimental 40). Also confirmed earlier: Options > Updates switching channel, Arsenal Lab Buy / Sell Arsenal Case.
 The Xbox save import real test is no longer needed (the user, 2026-10-30).
-Confirmed 2026-11-03: nametags always on (Experimental 73), the new Rebirth logo (101; good for now), scoreboard names not pickable (99), Options > Updates without Conceptual (105).
+Confirmed 2026-11-03: View Stock List after Test Arsenal (Experimental 108), nametags always on (Experimental 73), the new Rebirth logo (101; good for now), scoreboard names not pickable (99), Options > Updates without Conceptual (105).
 Confirmed 2026-11-02: match freeze fix (Experimental 69), Discord close (70), going back to Stable (77), start-up crash
 fix (78, not seen again), Updates: Off (98).
 
@@ -523,9 +523,7 @@ fix (78, not seen again), Updates: Off (98).
 5. **Edit-Settings.bat / hand-typed colours** (Experimental 74): a hex colour typed into settings.ini shows in the game.
 6. ~~Going back to Stable~~ (confirmed 2026-11-02).
 7. ~~Start-up crash fix~~ (confirmed 2026-11-02).
-8. **Test Arsenal, View Stock List after a battle** (Experimental 108; still crashed on 100): Lab > Test Arsenal, finish the battle; the
-   multiplayer menu shows for a moment, then the Lab. View Stock List shouldn't crash; backing out of the Lab goes to
-   the multiplayer menu.
+8. ~~Test Arsenal, View Stock List after a battle~~ (confirmed 2026-11-03, Experimental 108). Not checked: Edit Arsenal from that Lab, and the lobby's Lab after a match (same fix).
 9. **Lock onto partner** (Experimental 103): in a Tag Team match, with or without an enemy targeted, RB (or Tab)
    locks onto the partner; again unlocks. While on the partner, lock-on or switch-target goes to an enemy.
    Switch-target never reaches the partner. Log: "target hook running", "lock onto partner on / off ...".

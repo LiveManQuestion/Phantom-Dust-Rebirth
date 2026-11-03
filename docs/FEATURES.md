@@ -21,10 +21,6 @@ Experimental 98 (2026-11-02). Items marked *(not yet tested)* are built but stil
 - **Rated / Unrated lobbies.** Pick with the Rating option when creating a game. Any rule can be Rated (not only
   Official Battle rules). Unrated matches don't change your rating.
 - **No rating join limit.** Players of any rating can join any lobby.
-- **The lobby's SESSION INFO box and the Lobby Browser** show "(Rated)" or "(Unrated)" after the game rule.
-- **Arsenal Lab in the lobby.** The lobby's old Invite button reads "Arsenal Lab" and opens the Lab: edit your arsenal,
-  view your stock, and buy or sell arsenal cases without leaving the lobby. Works for non-hosts too.
-- **Gamertag option works when you're alone** in the lobby.
 - **The host's "nametags on bodies" setting applies to everyone** in the lobby.
 
 ## Voice chat
@@ -34,7 +30,6 @@ Experimental 98 (2026-11-02). Items marked *(not yet tested)* are built but stil
 - **Mic or Classic voice mode.** Mic: the in-game option turns only your microphone on and off. Classic: the original
   Voice Chat option (Off means you neither talk nor hear).
 - **Hear others on/off** (voice_listen, Mic mode).
-- **Megaphone icon** shows who is talking, following each player's Mic setting.
 
 ## Nametags
 - **Nametags always on** in matches; the old nametag button does nothing. Also on in Test Arsenal and ghost battles.
@@ -46,7 +41,6 @@ Experimental 98 (2026-11-02). Items marked *(not yet tested)* are built but stil
 ## Scoreboards and ghosts
 - **Global scoreboards restored** through Epic: Rating, Battle Royale wins, Tag Team wins, One-on-One wins, with
   player names and Total Wins.
-- **Only the 4 Global boards** are shown (Friends / Favorites removed).
 - **Removed and hidden players** are kept off the boards.
 - **Scoreboard ghost battles.** Pick a player on the Rating board and fight their arsenal, played by the AI. Your own
   arsenal is uploaded after each online match. No wins or rating change. *(not yet tested)*
@@ -54,22 +48,46 @@ Experimental 98 (2026-11-02). Items marked *(not yet tested)* are built but stil
 ## Arsenal Lab and practice
 - **Buy and sell arsenal cases from the Arsenal Lab**, including the lobby's Lab.
 - **Test Arsenal** (Lab, not in the lobby's Lab): choose the opponent's arsenal and your own, then fight an AI opponent.
-  No wins or rating change, and the old opponent-feedback screen is gone.
+  No wins or rating change.
 - **Max Credits & Skills in the shop:** up to 5,000,000 credits, 80 of every skill including DLC, and one 2-School
   Arsenal Case.
 
-## Menus
+## Menus and UI
+### Title and main menu
+- **"Rebirth" title screen:** new "Rebirth" artwork under the Phantom Dust logo, with the logo and "PRESS ENTER" moved
+  to fit it.
+- **Build version** shown on the main menu, under "Skill Update 1.40 applied".
+- **Community button** (was Help & Support) opens the Discord.
 - **"Xbox Live" reads "Online"** in every menu.
-- **Multiplayer > Settings** (was Xbox Live Options): name, voice mode, nametag colours, nametags on bodies, start-up
-  volume, Discord posts. The Cross Play row is gone.
-- **Online Store removed** from the Multiplayer menu.
+
+### Options
+- **Send Log** sends your logs to the developers in one press.
+- **Updates:** Stable, Experimental or Off.
+- **Sound > Aura Particle Beeps** on/off.
+
+### Multiplayer menu
+- **Settings** (was Xbox Live Options): name, voice mode, nametag colours, nametags on bodies, start-up volume,
+  Discord posts. The Cross Play row is gone.
+- **Online Store removed.**
 - **Trade reads "Theater"** (new feature coming later).
-- **Community button** on the main menu (was Help & Support) opens the Discord.
-- **Options > Send Log** sends your logs to the developers in one press.
-- **Options > Updates:** Stable, Experimental or Off.
-- **Options > Sound > Aura Particle Beeps** on/off.
-- **"Rebirth" title screen** artwork, and the build's version on the main menu.
-- **"Official Battle applies toward Scoreboard"** line removed from rule descriptions.
+- **Scoreboard** shows only the 4 Global boards (Friends / Favorites removed).
+- **Rule descriptions** no longer say "[Official Battle] Applies toward Scoreboard Total".
+
+### Lobby
+- **Arsenal Lab button** (was Invite): opens the Lab, so you can edit your arsenal, view your stock, and buy or sell
+  arsenal cases without leaving the lobby. Works for non-hosts too.
+- **Gamertag option** works when you're alone in the lobby.
+- **SESSION INFO box and Lobby Browser** show "(Rated)" or "(Unrated)" after the game rule.
+- **Rating option** when creating a game reads Rated / Unrated.
+
+### Arsenal Lab
+- **New rows:** Buy Arsenal Case, Sell Arsenal Case, and Test Arsenal (not in the lobby's Lab).
+- **Test Arsenal** asks for the opponent's arsenal first, then yours.
+- **The opponent-feedback screen** after a scoreboard or test battle is gone.
+
+### In a match
+- **Megaphone icon** shows who is talking, following each player's Mic setting.
+- **Nametags** (see the Nametags section).
 
 ## Controls
 - **PlayStation, Nintendo and other controllers** work like an Xbox controller, with rumble (more_controllers).

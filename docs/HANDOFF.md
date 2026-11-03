@@ -498,19 +498,20 @@ for non-hosts, Quick Join (non-Quick lobbies; Quick only without a usable arsena
 (Experimental 75), the EOS clock correction (joins with a wrong PC clock), and controllers other than Xbox
 (Experimental 40). Also confirmed earlier: Options > Updates switching channel, Arsenal Lab Buy / Sell Arsenal Case.
 The Xbox save import real test is no longer needed (the user, 2026-10-30).
+Confirmed 2026-11-02: match freeze fix (Experimental 69), Discord close (70), going back to Stable (77), start-up crash
+fix (78, not seen again), Updates: Off (98).
 
 ## Waiting for testers (as of 2026-10-30)
 1. **Mind Reading** (Experimental 85): a Tag Team match with at least one player per team and voice on. Before
    casting you don't hear the other team; while Mind Reading is active you do; when it ends, only your team again.
    Log: "voice: Mind Reading on - the other team is heard too" / "over", and "voice: team channel: X heard / muted
    (other team)".
-2. **Match freeze fix** (Experimental 69): a full 4-player match doesn't freeze for everyone.
-3. **Discord close fix** (Experimental 70): the lobby's Discord message says closed after the last player closes the game.
+2. ~~Match freeze fix~~ (confirmed 2026-11-02).
+3. ~~Discord close fix~~ (confirmed 2026-11-02).
 4. **Nametags always on** (Experimental 73): shown from the start of a match; the nametag button does nothing.
 5. **Edit-Settings.bat / hand-typed colours** (Experimental 74): a hex colour typed into settings.ini shows in the game.
-6. **Going back to Stable** (Experimental 77): an Experimental kit set to Updates: Stable installs Stable 10 at the
-   next start ("update: stable channel - going back to Stable build N" in pdlaunch.log).
-7. **Start-up crash fix** (Experimental 78): a timing race, can't be forced; the check is that it doesn't come back.
+6. ~~Going back to Stable~~ (confirmed 2026-11-02).
+7. ~~Start-up crash fix~~ (confirmed 2026-11-02).
 8. **Scoreboard ghost battles** (Experimental 92): Scoreboard > Ratings > pick a name (your own first) -> download ->
    arsenal choice -> battle against that player's ghost arsenal. A player without a ghost gives "clip damaged". Log:
    "ghost download for row ...", "ghost of ... loaded"; no wins or rating change after it.

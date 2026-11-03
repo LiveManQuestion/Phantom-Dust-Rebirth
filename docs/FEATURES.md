@@ -5,7 +5,7 @@ As of Experimental 98. *(untested)* = waiting for a test in a real match.
 ## Online
 - Epic Online Services instead of Xbox Live: no accounts, no port forwarding
 - Faster joins, joins with a wrong PC clock
-- No freeze on a short connection drop *(untested)*
+- No freeze on a short connection drop
 - Empty lobbies hidden; lobby join / leave crashes fixed
 - Store and unpacked copies, plus Linux (Wine)
 - Your own player name, kept after reinstalls

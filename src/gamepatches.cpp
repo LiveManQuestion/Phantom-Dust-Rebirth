@@ -1750,12 +1750,12 @@ namespace pdnet::gamepatches
         constexpr Colour kColours[] = { { "Yellow", 0xFFE600 }, { "Red", 0xFF5A5A }, { "Blue", 0x4FB4FF }, { "Green", 0x5AFF6E },
                                         { "Purple", 0xB46EFF }, { "Orange", 0xFFA03C }, { "Cyan", 0x3CF0FF }, { "Pink", 0xFF78C8 },
                                         { "White", 0xFFFFFF } };
-        enum SettingRow { kName, kVoiceMode, kBodyTags, kDeadColour, kAllyColour, kEnemyColour, kSplashVolume,
+        enum SettingRow { kName, kVoiceMode, kPartnerAim, kBodyTags, kDeadColour, kAllyColour, kEnemyColour, kSplashVolume,
                           kDiscordLobby, kDiscordPlayers, kSettingRows };
         char g_rowText[kSettingRows][80];
         char g_optionText[kSettingRows][96]; // the rows as the Options screen shows them (RefreshSettingRows)
         constexpr int kFirstOptionRow = 3;   // after Cross Play (1) and Voice Chat (2)
-        const char* kOptionLabels[kSettingRows] = { "Name", "Voice Mode", "Body Tags", "Dead Colour", "Ally Colour", "Foe Colour",
+        const char* kOptionLabels[kSettingRows] = { "Name", "Voice Mode", "Partner Aim", "Body Tags", "Dead Colour", "Ally Colour", "Foe Colour",
                                                     "Logo Volume", "Discord Lobby", "Discord Join" };
         std::atomic<bool> g_typingName{ false };
         std::atomic<bool> g_settingsDirty{ false }; // changed in the Settings screen since it opened or was last saved
@@ -1794,6 +1794,7 @@ namespace pdnet::gamepatches
             }
             sprintf_s(g_rowText[kName], "Name: %s", name.c_str());
             sprintf_s(g_rowText[kVoiceMode], "Voice mode: %s", c.voiceClassic ? "Classic" : "Modern");
+            sprintf_s(g_rowText[kPartnerAim], "Partner aim: %s", c.partnerClassic ? "Classic" : "Modern");
             sprintf_s(g_rowText[kBodyTags], "Nametags on bodies: %s", onOff(c.nametagsOnBodies));
             sprintf_s(g_rowText[kDeadColour], "Dead colour: %s", ColourName(c.deadNametagColor).c_str());
             sprintf_s(g_rowText[kAllyColour], "Teammate colour: %s", ColourName(c.allyNametagColor).c_str());
@@ -1814,6 +1815,7 @@ namespace pdnet::gamepatches
             {
             case kName: return "Left / right, then type a new name: Enter keeps it, Esc drops it.";
             case kVoiceMode: return "Modern: Mic mutes only you. Classic: Off mutes everyone.";
+            case kPartnerAim: return "Modern: RB locks onto partner. Classic: RB adds them to switch target.";
             case kBodyTags: return "Defeated players keep their nametag (Tag Team; the host's applies).";
             case kDeadColour: return "Nametag colour of a defeated player.";
             case kAllyColour: return "Nametag colour of your teammates (Tag Team).";
@@ -1899,6 +1901,7 @@ namespace pdnet::gamepatches
                 Log(L"gamepatch: settings: typing a new name");
                 break;
             case kVoiceMode: c.voiceClassic = !c.voiceClassic; break;
+            case kPartnerAim: c.partnerClassic = !c.partnerClassic; break;
             case kBodyTags: c.nametagsOnBodies = !c.nametagsOnBodies; UseOwnSettings(); break;
             case kDeadColour: c.deadNametagColor = NextColour(c.deadNametagColor, direction); break;
             case kAllyColour: c.allyNametagColor = NextColour(c.allyNametagColor, direction); break;
@@ -2004,7 +2007,7 @@ namespace pdnet::gamepatches
             const Config& c = EditableConfig();
             auto onOff = [](bool on) { return std::string(on ? "on" : "off"); };
             auto hex = [](uint32_t argb) { char s[8]; sprintf_s(s, "%06X", argb & 0xFFFFFF); return std::string(s); };
-            SaveSettings({ { "display_name", winrt::to_string(c.displayName) }, { "voice_mode", c.voiceClassic ? "classic" : "mic" },
+            SaveSettings({ { "display_name", winrt::to_string(c.displayName) }, { "voice_mode", c.voiceClassic ? "classic" : "mic" }, { "partner_aim", c.partnerClassic ? "classic" : "modern" },
                            { "nametags_on_bodies", onOff(c.nametagsOnBodies) },
                            { "dead_nametag_color", hex(c.deadNametagColor) }, { "ally_nametag_color", hex(c.allyNametagColor) },
                            { "enemy_nametag_color", hex(c.enemyNametagColor) }, { "splash_volume", std::to_string(c.splashVolume) },
@@ -2018,7 +2021,7 @@ namespace pdnet::gamepatches
         {
             Config& c = EditableConfig();
             const Config& s = g_settingsSaved;
-            c.displayName = s.displayName; c.voiceClassic = s.voiceClassic; c.nametagsOnBodies = s.nametagsOnBodies;
+            c.displayName = s.displayName; c.voiceClassic = s.voiceClassic; c.partnerClassic = s.partnerClassic; c.nametagsOnBodies = s.nametagsOnBodies;
             c.deadNametagColor = s.deadNametagColor; c.allyNametagColor = s.allyNametagColor; c.enemyNametagColor = s.enemyNametagColor;
             c.splashVolume = s.splashVolume;
             c.discordLobbyMessages = s.discordLobbyMessages; c.discordPlayerMessages = s.discordPlayerMessages;
@@ -3097,8 +3100,9 @@ namespace pdnet::gamepatches
 
     namespace
     {
-        // Lock onto partner: RB on a controller, or the partner_lock_key key, switches between the game's own target and
-        // this player's teammate (the game's Options > Lock Onto Partner only lets switch-target cycle through them).
+        // Lock onto partner: RB on a controller, or the partner_lock_key key. partner_aim=modern (Settings > Partner Aim):
+        // it switches between the game's own target and this player's teammate. partner_aim=classic: it only switches the
+        // game's own option, Options > Lock Onto Partner (the byte below), which lets switch-target cycle through teammates.
         // A human player's target is the block at player object +0x13f10 (FUN_14024ec80 -> FUN_140252a20 each frame,
         // the call at 0x14024f120): +0x10 is the target, an index into the targetable objects DAT_1404bcb50 (32, each
         // with the player's status record at +0xb8), +0xc the distance band, +0x300 the player. FUN_1402531d0 inside
@@ -3171,6 +3175,19 @@ namespace pdnet::gamepatches
             if (!player || player != PlayerObject(me)) return original(target);
             static std::atomic<bool> seen{ false };
             if (!seen.exchange(true)) Log(L"gamepatch: lock onto partner: target hook running for this PC's player %d", me);
+            if (GetConfig().partnerClassic)
+            {
+                g_partnerLock = false;
+                if (g_partnerToggle.exchange(false))
+                {
+                    volatile uint8_t* option = At(0x14052dfb9);
+                    *option = *option ? 0 : 1;
+                    Log(L"gamepatch: lock onto partner (classic): the game's option is %s", *option ? L"on" : L"off");
+                    int partner = *option ? -1 : PartnerSlot(me);
+                    if (partner >= 0 && *reinterpret_cast<int32_t*>(target + 0x10) == PartnerTarget(partner)) *reinterpret_cast<int32_t*>(target + 0x10) = -1; // back to an enemy
+                }
+                return original(target);
+            }
             if (g_partnerToggle.exchange(false))
             {
                 bool on = !g_partnerLock;

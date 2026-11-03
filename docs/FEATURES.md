@@ -52,7 +52,7 @@ As of Experimental 98. *(untested)* = waiting for a test in a real match.
 
 ## Controls
 - PlayStation, Nintendo and other controllers, with rumble
-- Lock onto partner: RB / Tab (key configurable) *(untested)*
+- Lock onto partner: RB / Tab (key configurable), Modern or Classic in Settings *(untested)*
 
 ## Other
 - Quieter start-up logos, game volume remembered

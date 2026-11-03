@@ -67,7 +67,7 @@ lists what it needs (xwin's Windows SDK, a C++/WinRT projection, Epic's SDK). Co
   (on `D:\` if there is one, else in `out\kits`; set `PDNET_KITS` to choose).
 - `build.bat promote <N>` renames Experimental N to the next `Stable <M>` and tags its source commit `stable-<M>`.
 - `build.bat conceptual "what it tries"` (on the `Conceptual` branch) saves the next `PhantomDust-pdnet Conceptual <N>.zip`.
-  Conceptual kits are for trying out ideas: they are never published, and they never update themselves.
+  Conceptual kits are for very experimental work: they are never published, and they never update themselves. Changes go from master into `Conceptual` only, never back.
 
 ## What's where
 

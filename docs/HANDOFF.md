@@ -528,7 +528,7 @@ fix (78, not seen again), Updates: Off (98).
 9. **Lock onto partner** (Experimental 103): in a Tag Team match, with or without an enemy targeted, RB (or Tab)
    locks onto the partner; again unlocks. While on the partner, lock-on or switch-target goes to an enemy.
    Switch-target never reaches the partner. Log: "target hook running", "lock onto partner on / off ...".
-10. **Modpack guard** (Experimental 109; rewritten, pewchy's mod vanished in game 2 on 108): load a modpack with PD Helper, play several matches, then Send Log. Log: 'modpack loaded (N bytes)', 'match starting, N bytes of skill data are modded' each match, 'skill data went back to vanilla (... menu N, game state N) - modpack put back' on a revert. Note which game the mod vanished in.
+10. **Modpack guard** (parked 2026-11-03: the user couldn't recreate pewchy's game 2 bug on Experimental 109; come back to it if it's reported again, with a log). Log: 'modpack loaded (N bytes)', 'match starting, N bytes of skill data are modded' each match, 'skill data went back to vanilla (... menu N, game state N) - modpack put back' on a revert. Note which game the mod vanished in.
 Known, not fixed: players from earlier lobbies keep their links and get reconnected every minute.
 
 ## Feature backlog (could be added / revisited)

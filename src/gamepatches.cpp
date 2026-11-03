@@ -2264,8 +2264,8 @@ namespace pdnet::gamepatches
         std::wstring UpdateChannel()
         {
             std::wstring channel = GetConfig().updateChannel;
-            if (!channel.empty()) return channel;
-            std::string label = BuildLabel();
+            if (_wcsicmp(channel.c_str(), L"stable") == 0 || _wcsicmp(channel.c_str(), L"experimental") == 0 || _wcsicmp(channel.c_str(), L"off") == 0) return channel;
+            std::string label = BuildLabel(); // empty or a typo in settings.ini: the kit's own, as pdlaunch does
             if (label.find("Linux") != std::string::npos) return L"off"; // no pdlaunch there, so no updates
             return label.find("Experimental") != std::string::npos ? L"experimental" : label.find("Stable") != std::string::npos ? L"stable" : L"off";
         }

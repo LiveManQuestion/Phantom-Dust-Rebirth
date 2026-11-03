@@ -60,7 +60,7 @@ What you save in the game goes to settings.ini (in the game's own data folder) a
 To change those by hand, e.g. an exact nametag colour, close the game and double-click pdnet\Edit-Settings.bat.
 Colours take any hex code: RRGGBB or #RRGGBB.
 Updates: Main menu > Options > Updates picks Stable or Experimental builds, or Off for no automatic updates
-(used from the next game start).
+(used from the next game start). Or set update_channel in settings.ini: stable, experimental or off.
   display_name=          your name (Setup.bat sets it)
   nametags_on_bodies=    on/off: defeated players keep their nametag. In a lobby the HOST's setting applies.
   dead_nametag_color=    colour of a defeated player's nametag (RRGGBB), FFE600 = yellow

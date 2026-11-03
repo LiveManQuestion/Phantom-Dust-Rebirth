@@ -3130,12 +3130,25 @@ namespace pdnet::gamepatches
             return -1;
         }
 
+        // The target block's fields (int offsets): +0x4 locked on, +0x10 target, +0x14 aiming at it this frame. The
+        // player's pad bits (FUN_140256580): +0x1425c held, +0x14264 pressed this frame; 0x800 = lock on / off
+        // (FUN_140252a20), 0x400 = switch target (FUN_1402531d0).
+        void Unlock(uint8_t* target)
+        {
+            *reinterpret_cast<int32_t*>(target + 0x4) = 0;
+            *reinterpret_cast<int32_t*>(target + 0x10) = -1;
+            *reinterpret_cast<int32_t*>(target + 0x14) = 0;
+        }
+
+        // Enemies and the partner are kept apart: the game's own lock-on and switch-target only ever reach enemies (the
+        // Lock Onto Partner option byte is held at 0 for this PC's player), and partner lock only the partner. While
+        // locked onto the partner, the game's lock-on or switch-target button goes to an enemy.
         void HookedTargetUpdate(uint8_t* target)
         {
             auto original = reinterpret_cast<TargetUpdateFn>(At(0x140252a20));
             uint8_t* player = *reinterpret_cast<uint8_t**>(target + 0x300);
             int me = *reinterpret_cast<int32_t*>(At(0x1404bbe00));
-            if ((!g_partnerLock && !g_partnerToggle) || !player || player != PlayerObject(me)) return original(target);
+            if (!player || player != PlayerObject(me)) return original(target);
             static std::atomic<bool> seen{ false };
             if (!seen.exchange(true)) Log(L"gamepatch: lock onto partner: target hook running for this PC's player %d", me);
             if (g_partnerToggle.exchange(false))
@@ -3145,26 +3158,43 @@ namespace pdnet::gamepatches
                 else
                 {
                     g_partnerLock = on;
-                    Log(L"gamepatch: lock onto partner %s", on ? L"on" : L"off (the game's own target again)");
-                    if (!on) *reinterpret_cast<int32_t*>(target + 0x10) = -1; // the game picks its own target again
+                    Log(L"gamepatch: lock onto partner %s", on ? L"on" : L"off");
+                    if (!on) Unlock(target);
                 }
             }
-            if (!g_partnerLock) return original(target);
-            int partner = PartnerSlot(me), index = partner < 0 ? -1 : PartnerTarget(partner);
-            if (index < 0)
+            uint32_t pressed = *reinterpret_cast<uint32_t*>(player + 0x14264);
+            if (g_partnerLock && (pressed & 0xc00))
             {
                 g_partnerLock = false;
+                // Switch target: the game moves from "no target" to the first enemy. Lock on: with nothing aimed at,
+                // the game locks onto an enemy instead of unlocking.
                 *reinterpret_cast<int32_t*>(target + 0x10) = -1;
-                Log(L"gamepatch: lock onto partner off - the partner is gone or down");
-                return original(target);
+                *reinterpret_cast<int32_t*>(target + 0x14) = 0;
+                Log(L"gamepatch: lock onto partner off - %s", pressed & 0x400 ? L"switch target to an enemy" : L"lock onto an enemy");
             }
-            *reinterpret_cast<int32_t*>(target + 0x10) = index;
+            int index = -1;
+            if (g_partnerLock)
+            {
+                int partner = PartnerSlot(me);
+                index = partner < 0 ? -1 : PartnerTarget(partner);
+                if (index < 0)
+                {
+                    g_partnerLock = false;
+                    Unlock(target);
+                    Log(L"gamepatch: lock onto partner off - the partner is gone or down");
+                }
+                else
+                {
+                    *reinterpret_cast<int32_t*>(target + 0x4) = 1; // locked on, as the game's own lock-on does
+                    *reinterpret_cast<int32_t*>(target + 0x10) = index;
+                }
+            }
             volatile uint8_t* allowPartner = At(0x14052dfb9);
             uint8_t saved = *allowPartner;
-            *allowPartner = 1; // teammates count as targets for this update only
+            *allowPartner = index >= 0 ? 1 : 0; // the partner only through partner lock
             original(target);
             *allowPartner = saved;
-            *reinterpret_cast<int32_t*>(target + 0x10) = index; // even if the switch-target button moved it on
+            if (index >= 0) *reinterpret_cast<int32_t*>(target + 0x10) = index;
         }
 
         // Presses: RB (GamepadButtons RightShoulder) on any controller, polled; the key from the game's window.

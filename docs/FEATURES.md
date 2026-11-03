@@ -54,8 +54,7 @@ Experimental 98 (2026-11-02). Items marked *(not yet tested)* are built but stil
 
 ## Menus and UI
 ### Title and main menu
-- **"Rebirth" title screen:** new "Rebirth" artwork under the Phantom Dust logo, with the logo and "PRESS ENTER" moved
-  to fit it.
+- **"Rebirth" title screen:** new "Rebirth" artwork under the Phantom Dust logo.
 - **Build version** shown on the main menu, under "Skill Update 1.40 applied".
 - **Community button** (was Help & Support) opens the Discord.
 - **"Xbox Live" reads "Online"** in every menu.
@@ -76,13 +75,11 @@ Experimental 98 (2026-11-02). Items marked *(not yet tested)* are built but stil
 ### Lobby
 - **Arsenal Lab button** (was Invite): opens the Lab, so you can edit your arsenal, view your stock, and buy or sell
   arsenal cases without leaving the lobby. Works for non-hosts too.
-- **Gamertag option** works when you're alone in the lobby.
 - **SESSION INFO box and Lobby Browser** show "(Rated)" or "(Unrated)" after the game rule.
 - **Rating option** when creating a game reads Rated / Unrated.
 
 ### Arsenal Lab
 - **New rows:** Buy Arsenal Case, Sell Arsenal Case, and Test Arsenal (not in the lobby's Lab).
-- **Test Arsenal** asks for the opponent's arsenal first, then yours.
 - **The opponent-feedback screen** after a scoreboard or test battle is gone.
 
 ### In a match

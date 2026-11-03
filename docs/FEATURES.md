@@ -4,20 +4,12 @@ Everything pdnet adds or changes compared with the original Phantom Dust (2017, 
 Experimental 98 (2026-11-02). Items marked *(not yet tested)* are built but still waiting for a test in a real match.
 
 ## Online play without Xbox Live
-- **No Xbox Live, no Teredo.** Online play runs through Epic Online Services (EOS). No Epic account and no Xbox
-  sign-in are needed.
-- **No port forwarding or router changes.** Epic connects players directly, and through its relay when it can't.
-- **Automatic relay fallback.** If a player can't be reached directly, pdnet switches to Epic's relay by itself.
-- **Clock correction.** PCs whose Windows clock is wrong (by a day or more) can still join. Only Epic's code sees the
-  corrected time; the Windows clock is never changed.
-- **Faster, more reliable joins.** Join requests are re-sent until answered, and every lobby member's connection is
-  accepted as soon as they show up.
-- **Match freeze fix.** A short connection drop pauses a match instead of freezing it for everyone. *(not yet tested)*
-- **Empty and ghost lobbies hidden** from the Lobby Browser and Quick Join.
-- **Lobby join crash fixed** (a second player joining a lobby could crash the game; from contributor DeadMan009).
-- **Leaving a lobby no longer crashes.**
-- **Works with the normal Microsoft Store install and with unpacked copies.** No game files are changed.
-- **Linux (Wine) build** from contributor DeadMan009.
+- **Epic Online Services replaces Xbox Live and Teredo.** No accounts, no port forwarding; Epic's relay is used
+  when a direct link fails.
+- **More reliable connections:** faster joins, joins with a wrong PC clock, and no freeze on a short drop
+  *(freeze fix not yet tested)*.
+- **Fixes:** empty lobbies hidden, no crash on joining or leaving a lobby.
+- **Runs on Store and unpacked copies** (no game files changed), plus a Linux (Wine) build.
 
 ## Player identity and saves
 - **Your own player name**, chosen in Setup and changeable in the game. No gamertag needed.

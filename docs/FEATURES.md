@@ -31,7 +31,6 @@ As of Experimental 98. *(untested)* = waiting for a test in a real match.
 
 ## Scoreboards
 - Global boards back: Rating, Battle Royale, Tag Team, One-on-One wins
-- Ghost battles: fight a player's arsenal, AI-driven *(untested)*
 
 ## Arsenal Lab
 - Buy and sell arsenal cases, also from the lobby

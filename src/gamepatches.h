@@ -35,10 +35,8 @@ namespace pdnet::gamepatches
     // True while this PC's player has Mind Reading ("listen in on target team's conversation"): the team channels
     // then let the other team be heard too, as the game's own voice rule did.
     bool MindReading();
-    // True from Lab > Test Arsenal, or a scoreboard ghost battle, until back in the menus: its wins don't count for the scoreboard.
+    // True from Lab > Test Arsenal until back in the menus: its wins don't count for the scoreboard.
     bool TestBattle();
-    // Sends this player's ghost (the current multiplayer arsenal) once per game run; the scoreboard calls it as it opens.
-    void SendOwnGhostOnce();
 
     // The multiplayer rating as kept in the save (progress.dat; 0x1405b1370), or -1 before the save is loaded.
     int SavedRating();

@@ -42,8 +42,6 @@ namespace pdnet::xsapi
     // EOS user ids by player id (the scoreboard's rows), for UserStatisticsService. This PC's own id always maps.
     void RememberUser(const std::wstring& xuid, const std::string& eosUserId);
     std::string EosUserOf(const std::wstring& xuid);
-    // The same by the name a scoreboard row shows (the scoreboard battle's fallback, gamepatches.cpp).
-    std::string EosUserOfName(const std::wstring& name);
 }
 #define PDNET_XSAPI_STUB(fn) do { ::pdnet::xsapi::ReportStub(fn); throw ::winrt::hresult_not_implemented(); } while (0)
 #define PDNET_XSAPI_STUB_NOEXCEPT(fn) ::pdnet::xsapi::ReportStub(fn)

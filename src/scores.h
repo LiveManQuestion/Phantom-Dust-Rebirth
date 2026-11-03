@@ -55,12 +55,4 @@ namespace pdnet::scores
 
     // Each player's total of a Sum stat (for extra columns such as TotalWin); missing players are left out.
     std::map<std::string, int32_t> UserScores(const std::string& stat, const std::vector<std::string>& userIds);
-
-    // Ghosts, the scoreboard battle's AI opponents: a player's arsenal packed into kGhostStats stats Ghost0.. (aggregation
-    // Latest; packing in gamepatches.cpp), sent after each finished online match. The original game kept it as the
-    // Xbox Live text statistic RatingGameClip.
-    constexpr int kGhostStats = 14;
-    void SubmitGhost(const std::vector<int32_t>& packed);
-    // A player's Ghost0.. values (empty if they have none or EOS can't be reached). Waits on the calling thread (~12 s).
-    std::vector<int32_t> GhostOf(const std::string& userId);
 }

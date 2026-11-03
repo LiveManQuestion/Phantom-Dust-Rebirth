@@ -620,9 +620,14 @@ namespace pdnet::gamepatches
         // feedback?", Cheating...), dead without Xbox Live and removed: a Test Arsenal battle goes back to the Lab,
         // any other to the scoreboard, where the feedback screen would have gone.
         constexpr int kFeedbackMenu = 75;
-        // The Lab opened after a test battle sits on top of the battle (menu 1) in the menu stack: its back would return
-        // into the battle (a black screen, Experimental 87), so it opens the multiplayer menu instead.
+        // The Lab opened on livedbtl (74) when a test is cancelled sits on the opponent's arsenal choice: its back opens the
+        // multiplayer menu instead.
         std::atomic<bool> g_labAfterTest{ false };
+        // After a test battle: a Lab opened right on top of the battle (menu 1) crashed the game in View Stock List
+        // (Experimental 99, toaf, three times; opened from the multiplayer menu it works), and its back returned into the
+        // battle (a black screen, Experimental 87). The battle now ends in the multiplayer menu (36), as the game's own
+        // scoreboard battle did, and the Lab opens on top of it a moment later (OpenPendingLab).
+        std::atomic<ULONGLONG> g_labPendingAt{ 0 };
         // Test Arsenal first opens livearsel (67) on its own for the opponent's arsenal. livearsel in scoreboard mode (its
         // menu parameter 0 = 1) stores a pick with g4 #575 (0x1403de844) and sets livedbtl's parameter 0 to 1, or to 2 when
         // cancelled, then goes back; that back (HookedPopMenu) copies the pick in as the opponent and opens livedbtl (74),
@@ -826,8 +831,9 @@ namespace pdnet::gamepatches
             if (menu != current) Log(L"menu: open %d (from %d)", menu, current);
             if (menu == kFeedbackMenu)
             {
-                int to = g_testBattle ? kLabMenu : kScoreboardMenu;
-                g_labAfterTest = g_testBattle.exchange(false);
+                bool test = g_testBattle.exchange(false);
+                int to = test ? kMultiplayerMenu : kScoreboardMenu;
+                if (test) g_labPendingAt = GetTickCount64(); // the Lab follows from the multiplayer menu (OpenPendingLab)
                 Log(L"menu: player feedback screen skipped - menu %d instead", to);
                 return g_pushMenu(manager, to, force);
             }
@@ -2428,6 +2434,27 @@ namespace pdnet::gamepatches
             OpenTestArsenal();
         }
 
+        // After a test battle, once the multiplayer menu is on screen with no input for 0.3 s: the Lab on top of it.
+        void OpenPendingLab(int32_t event)
+        {
+            ULONGLONG at = g_labPendingAt;
+            if (!at) return;
+            int64_t manager = MenuManager();
+            int current = CurrentMenu(manager);
+            if (current != kMultiplayerMenu)
+            {
+                if (current == 1 || current == kFeedbackMenu || GetTickCount64() - at < 10000) return; // still on its way
+                g_labPendingAt = 0;
+                return;
+            }
+            if (event != 0 || GetTickCount64() - at < 300) return;
+            g_labPendingAt = 0;
+            Log(L"gamepatch: Test Arsenal over - back to the Lab");
+            *At(0x1404bbc34) = 0;
+            g_pushMenu(manager, kLabMenu, 0);
+            *reinterpret_cast<char*>(manager + 0x1062c) = 0; // no picked label on the new menu (see OpenCaseMenu)
+        }
+
         bool LogItems(const char* added, int64_t* args, int64_t& result)
         {
             // Only the Options scripts add $KEYBOARD items. No menu check: the list is built before menu 4 is current.
@@ -2533,6 +2560,7 @@ namespace pdnet::gamepatches
             int64_t result = g_setState(args);
             CheckSendLogPick(event);
             OpenPendingTestArsenal(event);
+            OpenPendingLab(event);
             SubscribePartnerKeyOnce();
             return result;
         }

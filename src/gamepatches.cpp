@@ -2054,7 +2054,11 @@ namespace pdnet::gamepatches
                 if (first.rfind("\xEF\xBB\xBF", 0) == 0) first.erase(0, 3);
                 constexpr const char* kPrefix = "PhantomDust-pdnet ";
                 if (first.rfind(kPrefix, 0) == 0) first.erase(0, strlen(kPrefix));
-                return "Rebirth " + (first.empty() ? std::string("development build") : first);
+                // No kit-version.txt: build-linux.sh makes only the DLL, which goes in the game's folder, so it names itself.
+#ifndef PDNET_BUILD_LABEL
+#define PDNET_BUILD_LABEL "development build"
+#endif
+                return "Rebirth " + (first.empty() ? std::string(PDNET_BUILD_LABEL) : first);
             }();
             return label.c_str();
         }
@@ -2262,6 +2266,7 @@ namespace pdnet::gamepatches
             std::wstring channel = GetConfig().updateChannel;
             if (!channel.empty()) return channel;
             std::string label = BuildLabel();
+            if (label.find("Linux") != std::string::npos) return L"off"; // no pdlaunch there, so no updates
             return label.find("Experimental") != std::string::npos ? L"experimental" : label.find("Stable") != std::string::npos ? L"stable" : L"off";
         }
 

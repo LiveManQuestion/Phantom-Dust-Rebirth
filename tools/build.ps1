@@ -9,6 +9,8 @@
 #                             folder (D:\ if it exists, else out\kits; or set PDNET_KITS), with the notes in
 #                             pdnet\kit-version.txt
 #   promote <N>               rename Experimental N to the next "Stable <M>" and tag its source commit stable-<M>
+#   conceptual "notes"        save the kit as the next "PhantomDust-pdnet Conceptual <N>.zip" (from the Conceptual
+#                             branch): never published, and its pdlaunch never updates it
 # Needs: Visual Studio 2022 (or Build Tools) with "Desktop development with C++", and Epic's EOS SDK in deps\eos-sdk.
 # Optional, in private\ (never in git): eos.tester.ini (the EOS client testers use, shipped as the kit's eos.ini) and
 # links.ini (discord_webhook=, log_webhook=, discord_invite=, put into the kit's pdnet.ini).
@@ -141,7 +143,7 @@ if ($Mode -eq 'promote') {
     if ($page) { Write-Host "Published: $page" -ForegroundColor Green }
     exit 0
 }
-if ($Mode -notin 'build', 'experimental') { Fail "Unknown argument '$Mode'. Use: build.bat [experimental `"notes`" | promote N]" }
+if ($Mode -notin 'build', 'experimental', 'conceptual') { Fail "Unknown argument '$Mode'. Use: build.bat [experimental `"notes`" | conceptual `"notes`" | promote N]" }
 
 # ---- tools ---------------------------------------------------------------------------------------------------------
 Step 'Looking for Visual Studio and Epic''s SDK'
@@ -262,9 +264,10 @@ if ((Test-Path (Join-Path $root '.git')) -and (Get-Command git -ErrorAction Sile
 $label = if ($Mode -eq 'experimental') {
     $number = [Math]::Max((LastNumber 'Experimental'), $(if (Test-Path $counterFile) { [int](Get-Content $counterFile -Raw).Trim() } else { 0 })) + 1
     "PhantomDust-pdnet Experimental $number"
-} else { 'PhantomDust-pdnet development build' }
+} elseif ($Mode -eq 'conceptual') { "PhantomDust-pdnet Conceptual $((LastNumber 'Conceptual') + 1)" }
+else { 'PhantomDust-pdnet development build' }
 $version = "$label`r`npdnet.dll MD5 $md5`r`n" + $(if ($Mode -eq 'experimental') { "Build: $number`r`n" } else { '' }) +
-           "Source: $(if ($commit) { $commit } else { 'unknown (not built from a git clone)' })$dirty`r`n" + $(if ($Mode -eq 'experimental' -and $Arg) { "$Arg`r`n" } else { '' })
+           "Source: $(if ($commit) { $commit } else { 'unknown (not built from a git clone)' })$dirty`r`n" + $(if ($Mode -ne 'build' -and $Arg) { "$Arg`r`n" } else { '' })
 [IO.File]::WriteAllText((Join-Path $files 'kit-version.txt'), $version, (New-Object Text.UTF8Encoding $false))
 Zip $kit (Join-Path $out 'PhantomDust-pdnet.zip')
 
@@ -272,6 +275,14 @@ Write-Host "`nBuilt:" -ForegroundColor Green
 Write-Host "  $out\pdnet.dll, pdlaunch.exe"
 Write-Host "  $kit  (unzipped kit: run its Setup.bat to install on this PC)"
 Write-Host "  $out\PhantomDust-pdnet.zip"
+
+if ($Mode -eq 'conceptual') {
+    if (-not (Test-Path $kits)) { New-Item -ItemType Directory -Force $kits | Out-Null }
+    $zip = Join-Path $kits "$label.zip"
+    Copy-Item (Join-Path $out 'PhantomDust-pdnet.zip') $zip -Force
+    Write-Host "  $zip" -ForegroundColor Green
+    Write-Host 'Conceptual: not published, and it never updates itself. The kit has eos.ini and the Discord links inside: share it only with your testers.' -ForegroundColor Yellow
+}
 
 if ($Mode -eq 'experimental') {
     if ($dirty) { Write-Host 'Note: there are uncommitted changes; the kit says so in kit-version.txt.' -ForegroundColor Yellow }

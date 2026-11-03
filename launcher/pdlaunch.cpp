@@ -836,6 +836,9 @@ namespace
     {
         ClearOldUpdate();
         KitVersion kit = ReadKitVersion();
+        // Conceptual kits (build.bat conceptual, from the Conceptual branch) are never published and never updated:
+        // an update would replace the concept with a master build.
+        if (kit.label.find("Conceptual") != std::string::npos) { Log(L"update: off (Conceptual build)"); return; }
         std::wstring fallback = kit.label.find("Experimental") != std::string::npos ? L"experimental"
                               : kit.label.find("Stable") != std::string::npos ? L"stable" : L"off";
         std::wstring channel = Setting(L"update_channel", L"");

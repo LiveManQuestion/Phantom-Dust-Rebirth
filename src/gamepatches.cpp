@@ -623,11 +623,17 @@ namespace pdnet::gamepatches
         // The Lab opened on livedbtl (74) when a test is cancelled sits on the opponent's arsenal choice: its back opens the
         // multiplayer menu instead.
         std::atomic<bool> g_labAfterTest{ false };
-        // After a test battle: a Lab opened right on top of the battle (menu 1) crashed the game in View Stock List
-        // (Experimental 99, toaf, three times; opened from the multiplayer menu it works), and its back returned into the
-        // battle (a black screen, Experimental 87). The battle now ends in the multiplayer menu (36), as the game's own
+        // After a test battle: a Lab opened right on top of the battle (menu 1) has a back that returns into the battle
+        // (a black screen, Experimental 87). The battle now ends in the multiplayer menu (36), as the game's own
         // scoreboard battle did, and the Lab opens on top of it a moment later (OpenPendingLab).
         std::atomic<ULONGLONG> g_labPendingAt{ 0 };
+        // The Lab's scripts read menu variables 0, 1 and 2 (command 14; DAT_140533c10, ints) as they start: variable 0 & 0xff
+        // picks the save's list (g5 #111, +0xb50), and only lists 0 and 1 exist (FUN_14015a520). The multiplayer menu sets
+        // all three to 0 just before opening the Lab (livemain_en.ssb 0x175c); when pdnet opens it, nothing did. A battle
+        // leaves variable 0 at 2 (command_en.ssb), so View Stock List copied from an empty list and crashed
+        // (PDUWP+0x15a257, FUN_14015a230 with list 2; Experimental 99 and 100; the dump shows variable 0 = 2).
+        int32_t* MenuVariables() { return reinterpret_cast<int32_t*>(At(0x140533c10)); }
+        void ResetLabVariables() { memset(MenuVariables(), 0, 3 * sizeof(int32_t)); }
         // Test Arsenal first opens livearsel (67) on its own for the opponent's arsenal. livearsel in scoreboard mode (its
         // menu parameter 0 = 1) stores a pick with g4 #575 (0x1403de844) and sets livedbtl's parameter 0 to 1, or to 2 when
         // cancelled, then goes back; that back (HookedPopMenu) copies the pick in as the opponent and opens livedbtl (74),
@@ -842,6 +848,7 @@ namespace pdnet::gamepatches
                 g_testBattle = false;
                 g_labAfterTest = true; // 74 sits on the opponent's arsenal choice: the Lab's back goes to the multiplayer menu
                 Log(L"menu: leaving Test Arsenal - back to the Lab instead of the scoreboard");
+                ResetLabVariables();
                 return g_pushMenu(manager, kLabMenu, force);
 
             }
@@ -2455,6 +2462,7 @@ namespace pdnet::gamepatches
             if (event != 0 || GetTickCount64() - at < 300) return;
             g_labPendingAt = 0;
             Log(L"gamepatch: Test Arsenal over - back to the Lab");
+            ResetLabVariables();
             *At(0x1404bbc34) = 0;
             g_pushMenu(manager, kLabMenu, 0);
             *reinterpret_cast<char*>(manager + 0x1062c) = 0; // no picked label on the new menu (see OpenCaseMenu)
@@ -2865,6 +2873,13 @@ namespace pdnet::gamepatches
         g_editorFromLobby = true;
         g_lobbyEndedInEditor = false;
         SetLobbyAvailable(false); // like the lobby's own menus: the match can't start while this player is in the Lab
+        // The lobby's script uses variable 0 too (0 or 1), so only a value with no list behind it is changed (see
+        // MenuVariables): a match or liveend_en.ssb can leave 2 or 3.
+        if ((MenuVariables()[0] & 0xff) > 1)
+        {
+            Log(L"menu: menu variable 0 was %d - 0 for the Arsenal Lab", MenuVariables()[0]);
+            MenuVariables()[0] = 0;
+        }
         *At(0x1404bbc34) = 0; // as the script's own "open menu" command does (FUN_140207020)
         g_pushMenu(manager, kLabMenu, 0);
         return true;

@@ -3294,15 +3294,20 @@ namespace pdnet::gamepatches
     namespace
     {
         // Modpacks (PD Helper's ModLoader = Skill Editor) write their skill data straight into the game's copy of
-        // gsdata_<lang>.dat in memory: the block at 0x1404c5240 (pointer DAT_1404c5228, 0x44004 bytes, loaded once at
-        // start-up by FUN_14017da90). Players saw it go back to vanilla after matches, online / lobby screens and the
-        // title screen; no game code found re-reads it after start-up, so the cause isn't pinned down. SkillDataGuard
-        // keeps the mod: it compares the block with the file on disk and with the last modded state it saw, every 200 ms.
-        // Changes that aren't a return to vanilla are taken as the new modded state (Skill Editor's live edits too); when
-        // most modded bytes return to vanilla at once, the modded state is copied back and the moment is logged.
+        // gsdata_<lang>.dat in memory: the block at 0x1404c5240 (pointer DAT_1404c5228, 0x44004 bytes). The game fills it
+        // from the file at start-up (FUN_14017da90, done flag DAT_140509b90), then once, on the first main menu or session
+        // join (g10 #0 = FUN_1400bd660), copies its stored online copy over it (buffer DAT_1403dd458, size DAT_1403dd460, done
+        // flag DAT_1403dd465; from the save's UserConfig\gsdata_<lang>.dat). So what the game runs on isn't the file: 2627
+        // bytes apart on the developer's PC with no mod, which is why Experimental 97-108 saw every player as modded and took
+        // a revert for an edit, without a word in the log. Players saw mods go back to vanilla after matches, online / lobby
+        // screens and the title screen; that one copy is the only game code found that could do it, so the cause isn't
+        // pinned down. SkillDataGuard keeps the mod: every 200 ms it compares the block with the data as the game loaded it
+        // and the last modded state. Changes that aren't a return to the game's data are the new modded state (Skill
+        // Editor's live edits too); when most modded bytes return to it at once, they are put back and the moment is logged.
+        // Each match start logs how many bytes are modded, to tell a change in the block from anything else.
         constexpr size_t kSkillDataSize = 0x44004;
 
-        std::vector<uint8_t> VanillaSkillData()
+        std::vector<uint8_t> SkillDataFile()
         {
             wchar_t exe[MAX_PATH];
             GetModuleFileNameW(nullptr, exe, MAX_PATH);
@@ -3317,53 +3322,97 @@ namespace pdnet::gamepatches
                 data.resize(fread(data.data(), 1, data.size(), f));
                 fclose(f);
             }
-            if (data.size() != kSkillDataSize) { Log(L"gamepatch: modpack guard off - %s isn't readable or isn't %zu bytes", path.c_str(), kSkillDataSize); data.clear(); }
+            if (data.size() != kSkillDataSize) data.clear();
             return data;
+        }
+
+        // The game's stored online copy, if it's there and whole (the sign-in code can free it: hence __try).
+        bool CopyStoredSkillData(uint8_t* to)
+        {
+            __try
+            {
+                const uint8_t* stored = *reinterpret_cast<uint8_t**>(At(0x1403dd458));
+                if (!stored || *reinterpret_cast<int32_t*>(At(0x1403dd460)) != kSkillDataSize || *reinterpret_cast<const int32_t*>(stored) != kSkillDataSize) return false;
+                memcpy(to, stored, kSkillDataSize);
+                return true;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
         }
 
         void SkillDataGuard()
         {
             std::thread([]
             {
-                std::vector<uint8_t> vanilla = VanillaSkillData();
-                if (vanilla.empty()) return;
                 uint8_t* block = At(0x1404c5240);
-                // The start-up load: wait until the block holds the file (it is zeroes before).
-                for (int i = 0; i < 600 && memcmp(block, vanilla.data(), kSkillDataSize) != 0; ++i) Sleep(100);
-                Log(L"gamepatch: modpack guard ready (skill data %s the game files)", memcmp(block, vanilla.data(), kSkillDataSize) == 0 ? L"matches" : L"differs from");
-                std::vector<uint8_t> modded, now(kSkillDataSize);
+                std::vector<uint8_t> file = SkillDataFile(), stock, modded, now(kSkillDataSize);
+                bool stockHasStored = false; // the stored copy is in `stock`
+                int lastMenu = -1;
                 for (;;)
                 {
                     Sleep(200);
+                    if (!*reinterpret_cast<volatile int32_t*>(At(0x140509b90))) continue; // still loading the file
                     memcpy(now.data(), block, kSkillDataSize);
-                    if (modded.empty())
+                    bool applied = *reinterpret_cast<volatile uint8_t*>(At(0x1403dd465)) != 0;
+                    if (modded.empty() && (stock.empty() || (applied && !stockHasStored)))
                     {
-                        if (memcmp(now.data(), vanilla.data(), kSkillDataSize) == 0) continue;
-                        modded = now;
-                        Log(L"gamepatch: modpack loaded - its skill data will be kept until the game closes");
+                        stock = now; // the game's own data, as far as it has got
+                        stockHasStored = applied;
+                        Log(L"gamepatch: modpack guard: skill data loaded (%s)", applied ? L"the stored copy" : L"the file");
                         continue;
                     }
+                    if (!modded.empty() && applied && !stockHasStored)
+                    {
+                        // The game's one copy landed on a modpack loaded before it (the first main menu or join).
+                        if (CopyStoredSkillData(stock.data())) Log(L"gamepatch: modpack guard: the game applied its stored copy over the modpack");
+                        stockHasStored = true;
+                    }
+                    if (modded.empty())
+                    {
+                        if (memcmp(now.data(), stock.data(), kSkillDataSize) == 0) continue;
+                        modded = now;
+                        size_t bytes = 0;
+                        for (size_t i = 0; i < kSkillDataSize; ++i) bytes += modded[i] != stock[i];
+                        Log(L"gamepatch: modpack loaded (%zu bytes) - its skill data will be kept until the game closes", bytes);
+                        continue;
+                    }
+                    int menu = CurrentMenu(MenuManager());
+                    if (menu != lastMenu && menu == 1)
+                    {
+                        size_t bytes = 0;
+                        for (size_t i = 0; i < kSkillDataSize; ++i) bytes += now[i] != stock[i];
+                        Log(L"gamepatch: modpack guard: match starting, %zu bytes of skill data are modded", bytes);
+                    }
+                    lastMenu = menu;
                     if (memcmp(now.data(), modded.data(), kSkillDataSize) == 0) continue;
-                    // Of the bytes the mod changed, how many are vanilla again; and is anything new?
+                    // Bytes back at the game's data (or the file's), how many of them the mod had changed; and anything new?
+                    auto back = [&](size_t i) { return now[i] != modded[i] && (now[i] == stock[i] || (!file.empty() && now[i] == file[i])); };
                     size_t moddedBytes = 0, reverted = 0, otherChanges = 0;
                     for (size_t i = 0; i < kSkillDataSize; ++i)
                     {
-                        bool isMod = modded[i] != vanilla[i];
-                        if (isMod) { ++moddedBytes; if (now[i] == vanilla[i]) ++reverted; }
-                        if (now[i] != modded[i] && !(isMod && now[i] == vanilla[i])) ++otherChanges;
+                        bool isMod = modded[i] != stock[i];
+                        if (isMod) ++moddedBytes;
+                        if (back(i)) { if (isMod) ++reverted; }
+                        else if (now[i] != modded[i]) ++otherChanges;
                     }
-                    // A reload: many modded bytes (or most of them) vanilla again at once, little else new. A Skill Editor edit
-                    // that sets one value back to vanilla touches a few bytes and stays an edit.
+                    // A reload: many modded bytes (or most of them) back at once, little else new. A Skill Editor edit that
+                    // sets one value back touches a few bytes and stays an edit.
                     if (reverted && (reverted >= 64 || reverted * 2 >= moddedBytes) && otherChanges * 10 <= reverted)
                     {
                         for (size_t i = 0; i < kSkillDataSize; ++i) // only what reverted: anything else the game wrote stays
-                            if (modded[i] != vanilla[i] && now[i] == vanilla[i]) block[i] = modded[i];
-                        for (size_t i = 0; i < kSkillDataSize; ++i)
-                            if (!(modded[i] != vanilla[i] && now[i] == vanilla[i])) modded[i] = now[i];
+                        {
+                            if (back(i)) block[i] = modded[i];
+                            else modded[i] = now[i];
+                        }
                         Log(L"gamepatch: skill data went back to vanilla (%zu of %zu modded bytes; menu %d, game state %d) - modpack put back",
-                            reverted, moddedBytes, CurrentMenu(MenuManager()), *reinterpret_cast<int32_t*>(At(0x1404bc950)));
+                            reverted, moddedBytes, menu, *reinterpret_cast<int32_t*>(At(0x1404bc950)));
                     }
-                    else modded = now; // an edit (Skill Editor) or another modpack: the new modded state
+                    else
+                    {
+                        static int told = 0;
+                        if (told++ < 20) Log(L"gamepatch: modpack guard: skill data edited (%zu bytes back, %zu others; menu %d, game state %d)",
+                                             reverted, otherChanges, menu, *reinterpret_cast<int32_t*>(At(0x1404bc950)));
+                        modded = now; // an edit (Skill Editor) or another modpack: the new modded state
+                    }
                 }
             }).detach();
         }

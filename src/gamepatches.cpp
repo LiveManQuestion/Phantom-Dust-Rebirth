@@ -2265,19 +2265,14 @@ namespace pdnet::gamepatches
             return label.find("Experimental") != std::string::npos ? L"experimental" : label.find("Stable") != std::string::npos ? L"stable" : L"off";
         }
 
-        // A Conceptual kit (build.bat conceptual) is never updated, whatever update_channel says.
-        bool Conceptual() { return strstr(BuildLabel(), "Conceptual") != nullptr; }
-
         void RefreshUpdateRow()
         {
-            if (Conceptual()) { strcpy_s(g_updateRowText, "Updates: Off (Conceptual)"); return; }
             std::wstring channel = UpdateChannel();
             sprintf_s(g_updateRowText, "Updates: %s", _wcsicmp(channel.c_str(), L"experimental") == 0 ? "Experimental" : _wcsicmp(channel.c_str(), L"off") == 0 ? "Off" : "Stable");
         }
 
         void SwitchUpdates()
         {
-            if (Conceptual()) return; // never updated (pdlaunch)
             std::wstring now = UpdateChannel();
             std::wstring next = _wcsicmp(now.c_str(), L"stable") == 0 ? L"experimental" : _wcsicmp(now.c_str(), L"experimental") == 0 ? L"off" : L"stable";
             EditableConfig().updateChannel = next;

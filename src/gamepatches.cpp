@@ -2811,6 +2811,13 @@ namespace pdnet::gamepatches
         void BackButtonTick(int64_t manager)
         {
             int current = CurrentMenu(manager);
+            static int32_t lastAssigning = -1;
+            int32_t assigning = *reinterpret_cast<int32_t*>(At(0x1403dd3d8));
+            if (assigning != lastAssigning)
+            {
+                lastAssigning = assigning;
+                Log(L"gamepatch: keyboard: assigning row %d (menu %d)", assigning, current);
+            }
             if (current == kStartMenu && g_optionChanged)
             {
                 static uint8_t* patched = nullptr;
@@ -3562,6 +3569,8 @@ namespace pdnet::gamepatches
         GameKeyFn g_gameKey = nullptr;
         int64_t HookedGameKey(void* self, void* sender, void** args)
         {
+            static std::atomic<int> seen{ 0 };
+            if (seen++ < 25) Log(L"gamepatch: keyboard: the game's key handler ran (assigning row %d)", *reinterpret_cast<int32_t*>(At(0x1403dd3d8)));
             int64_t result = g_gameKey(self, sender, args);
             if (!args) return result;
             void** vtable = reinterpret_cast<void**>(*args);

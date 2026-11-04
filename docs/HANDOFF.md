@@ -518,7 +518,7 @@ for non-hosts, Quick Join (non-Quick lobbies; Quick only without a usable arsena
 (Experimental 75), the EOS clock correction (joins with a wrong PC clock), and controllers other than Xbox
 (Experimental 40). Also confirmed earlier: Options > Updates switching channel, Arsenal Lab Buy / Sell Arsenal Case.
 The Xbox save import real test is no longer needed (the user, 2026-10-30).
-Confirmed 2026-11-04: Test Arsenal picks, all of it (Experimental 119), Edit Arsenal after a test battle, Mind Reading (85), the lobby's Arsenal Lab > View Stock List after a match (108), the Partner Aim row exists in Settings (saving and match behaviour not yet confirmed). A Conceptual kit doesn't need a test (the user).
+Confirmed 2026-11-04: update_channel=off in settings.ini ('update: off (update_channel=off)' in the user's pdlaunch.log, Experimental 119). Test Arsenal picks, all of it (Experimental 119), Edit Arsenal after a test battle, Mind Reading (85), the lobby's Arsenal Lab > View Stock List after a match (108), the Partner Aim row exists in Settings (saving and match behaviour not yet confirmed). A Conceptual kit doesn't need a test (the user).
 Confirmed 2026-11-03: View Stock List after Test Arsenal (Experimental 108), nametags always on (Experimental 73), the new Rebirth logo (101; good for now), scoreboard names not pickable (99), Options > Updates without Conceptual (105).
 Confirmed 2026-11-02: match freeze fix (Experimental 69), Discord close (70), going back to Stable (77), start-up crash
 fix (78, not seen again), Updates: Off (98).

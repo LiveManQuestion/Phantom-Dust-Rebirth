@@ -445,8 +445,9 @@ namespace
         return static_cast<pdnet::pads::Shared*>(view);
     }
 
-    // Has the game the keyboard focus? A UWP window's top level is ApplicationFrameHost's, the game's CoreWindow its child;
-    // full screen, the CoreWindow is on top.
+    // Has the game the keyboard focus? Its own window on top, or a child of the frame on top, or (seen on the developer's
+    // PC, 124: a CoreWindow of no process could be found) Windows' app frame with no child of another process, and a title
+    // that is empty or the game's. Another app's frame has its own CoreWindow and title.
     bool GameHasFocus(DWORD pid)
     {
         HWND top = GetForegroundWindow();
@@ -464,7 +465,12 @@ namespace
             s->found = true;
             return FALSE;
         }, reinterpret_cast<LPARAM>(&search));
-        return search.found;
+        if (search.found) return true;
+        wchar_t name[64] = {};
+        if (!GetClassNameW(top, name, 64) || wcscmp(name, L"ApplicationFrameWindow") != 0) return false;
+        wchar_t title[128] = {};
+        GetWindowTextW(top, title, 128);
+        return !title[0] || wcsstr(title, L"Phantom Dust");
     }
 
     // The keyboard for pdnet (padshare.h), every 8 ms until the game exits. Mouse buttons, the Windows keys and the

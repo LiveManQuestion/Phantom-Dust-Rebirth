@@ -75,6 +75,7 @@ Updates: Main menu > Options > Updates picks Stable or Experimental builds, or O
                          modern: locks onto your partner; classic: turns the original Lock Onto Partner option on/off,
                          so switch target can also reach your partner
   partner_lock_key=      keyboard key for that input in a match (default Tab; none = off).
+                         In the game: Main menu > Options > Keyboard > Lock Onto Partner.
                          On a controller it is RB.
   splash_volume=         % of your volume from the start-up logos until you are past the title screen
   discord_*              lobby announcements in Discord when you host

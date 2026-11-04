@@ -3392,6 +3392,18 @@ namespace pdnet::gamepatches
         // Enemies and the partner are kept apart: the game's own lock-on and switch-target only ever reach enemies (the
         // Lock Onto Partner option byte is held at 0 for this PC's player), and partner lock only the partner. While
         // locked onto the partner, the game's lock-on or switch-target button goes to an enemy.
+        std::atomic<int> g_classicOption{ -1 }; // partner_aim=classic: the option byte in this match; -1: not read yet
+        // Is the current target a teammate (alive or down)? Target object +0xb8 = the status record, +0x61a0 = its player.
+        bool TargetIsTeammate(uint8_t* target, uint8_t* player)
+        {
+            int index = *reinterpret_cast<int32_t*>(target + 0x10);
+            if (index < 0 || index >= 32) return false;
+            uint8_t* object = reinterpret_cast<uint8_t**>(At(0x1404bcb50))[index];
+            uint8_t* status = object ? *reinterpret_cast<uint8_t**>(object + 0xb8) : nullptr;
+            uint8_t* owner = status ? *reinterpret_cast<uint8_t**>(status + 0x61a0) : nullptr;
+            return owner && owner != player && *reinterpret_cast<uint32_t*>(owner + 0x1c) == *reinterpret_cast<uint32_t*>(player + 0x1c);
+        }
+
         void HookedTargetUpdate(uint8_t* target)
         {
             auto original = reinterpret_cast<TargetUpdateFn>(At(0x140252a20));
@@ -3403,14 +3415,16 @@ namespace pdnet::gamepatches
             if (GetConfig().partnerClassic)
             {
                 g_partnerLock = false;
+                // Held here while the match runs, so the second press always turns it off, whatever else writes the byte.
+                volatile uint8_t* option = At(0x14052dfb9);
+                if (g_classicOption < 0) g_classicOption = *option ? 1 : 0;
                 if (g_partnerToggle.exchange(false))
                 {
-                    volatile uint8_t* option = At(0x14052dfb9);
-                    *option = *option ? 0 : 1;
-                    Log(L"gamepatch: lock onto partner (classic): the game's option is %s", *option ? L"on" : L"off");
-                    int partner = *option ? -1 : PartnerSlot(me);
-                    if (partner >= 0 && *reinterpret_cast<int32_t*>(target + 0x10) == PartnerTarget(partner)) *reinterpret_cast<int32_t*>(target + 0x10) = -1; // back to an enemy
+                    g_classicOption = g_classicOption ? 0 : 1;
+                    Log(L"gamepatch: lock onto partner (classic): the game's option is %s", g_classicOption ? L"on" : L"off");
+                    if (!g_classicOption && TargetIsTeammate(target, player)) *reinterpret_cast<int32_t*>(target + 0x10) = -1; // back to an enemy
                 }
+                *option = g_classicOption ? 1 : 0;
                 return original(target);
             }
             if (g_partnerToggle.exchange(false))
@@ -3497,6 +3511,53 @@ namespace pdnet::gamepatches
             if (match) g_partnerToggle = true;
         }
 
+        // Options > Keyboard: one more row after the game's 22 (FUN_1400be7f0, g10 #18, row and column: 0 the name, 1 the key, 2
+        // the second key). A pick is g10 #19 (the row goes to 0x1403dd3d8, the script waits for -1). The game's key handler
+        // does nothing for a row past its table, so the key press is taken in HookedKey and saved as partner_lock_key.
+        constexpr int kPartnerKeyRow = 0x16;
+        NativeFn g_keyRow = nullptr, g_keyDefaults = nullptr;
+        int64_t HookedKeyRow(int64_t* args)
+        {
+            if (!args || args[0] < kPartnerKeyRow) return g_keyRow(args);
+            if (args[0] > kPartnerKeyRow) return 0;
+            if (args[1] == 0) return reinterpret_cast<int64_t>("Lock Onto Partner");
+            if (args[1] != 1) return 0;
+            if (*reinterpret_cast<int32_t*>(At(0x1403dd3d8)) == kPartnerKeyRow) return reinterpret_cast<int64_t>("PRESS A KEY");
+            uint32_t key = GetConfig().partnerLockKey;
+            uint8_t* names = At(0x1403dd470); // 0x97 entries: key code, then its name at +8
+            for (int i = 0; i < 0x97; ++i)
+                if (*reinterpret_cast<uint32_t*>(names + i * 0x10) == key) return *reinterpret_cast<int64_t*>(names + i * 0x10 + 8);
+            return reinterpret_cast<int64_t>("?");
+        }
+
+        void SavePartnerKey(uint32_t key)
+        {
+            EditableConfig().partnerLockKey = key;
+            // In a form KeyCode reads back: one digit alone would mean that key, not that code.
+            SaveSetting("partner_lock_key", key == 0x09 ? "Tab" : key == 0x08 ? "Backspace" : std::to_string(key));
+            Log(L"gamepatch: lock onto partner: keyboard key is now 0x%02X", key);
+        }
+
+        int64_t HookedKeyDefaults(int64_t* args)
+        {
+            int64_t result = g_keyDefaults(args);
+            if (GetConfig().partnerLockKey != 0x09) SavePartnerKey(0x09);
+            return result;
+        }
+
+        // From the dispatcher's AcceleratorKeyActivated: KeyDown never saw the key in a match (Experimental 94-120).
+        void HookedKey(uint32_t key)
+        {
+            int32_t* assigning = reinterpret_cast<int32_t*>(At(0x1403dd3d8));
+            if (*assigning == kPartnerKeyRow)
+            {
+                if (key != 0x0D && key != 0x1B) SavePartnerKey(key); // Enter and Esc cancel, as for the game's own rows
+                *assigning = -1;
+                return;
+            }
+            if (key && key == GetConfig().partnerLockKey) PartnerPress(L"key");
+        }
+
         void PartnerLock()
         {
             uint8_t* site = At(0x14024f120);
@@ -3521,7 +3582,7 @@ namespace pdnet::gamepatches
                 for (;;)
                 {
                     Sleep(16);
-                    if (!InMatch()) { g_partnerLock = false; g_partnerToggle = false; held = false; continue; }
+                    if (!InMatch()) { g_partnerLock = false; g_partnerToggle = false; g_classicOption = -1; held = false; continue; }
                     bool now = AnyPadHolds(0x800); // RightShoulder
                     if (now && !held) PartnerPress(L"RB");
                     held = now;
@@ -3529,6 +3590,9 @@ namespace pdnet::gamepatches
             }).detach();
             uint32_t key = GetConfig().partnerLockKey;
             Log(L"gamepatch: lock onto partner ready (RB%s)", key ? L" or the partner_lock_key key, once the menus run" : L"");
+            bool row = WrapCommand<NativeFn>(0x1403ddde0 + 18 * 8, 0x1400be7f0, &HookedKeyRow, g_keyRow, L"partner lock key row") &&
+                       WrapCommand<NativeFn>(0x1403ddde0 + 20 * 8, 0x1400be990, &HookedKeyDefaults, g_keyDefaults, L"partner lock key default");
+            Log(L"gamepatch: Options > Keyboard: Lock Onto Partner row %s", row ? L"ready" : L"NOT added");
         }
 
         // The key comes from the game's window (KeyDown). Subscribing from pdnet's own thread right at injection crashed the
@@ -3537,23 +3601,23 @@ namespace pdnet::gamepatches
         void SubscribePartnerKeyOnce()
         {
             static std::once_flag once;
-            uint32_t key = GetConfig().partnerLockKey;
-            if (!key) return;
-            std::call_once(once, [key]
+            std::call_once(once, []
             {
                 try
                 {
                     using namespace winrt::Windows::UI::Core;
                     auto window = winrt::Windows::ApplicationModel::Core::CoreApplication::MainView().CoreWindow();
-                    window.Dispatcher().RunAsync(CoreDispatcherPriority::Normal, [window, key]
+                    window.Dispatcher().RunAsync(CoreDispatcherPriority::Normal, [window]
                     {
                         try
                         {
-                            window.KeyDown([key](CoreWindow const&, KeyEventArgs const& e)
+                            window.Dispatcher().AcceleratorKeyActivated([](CoreDispatcher const&, AcceleratorKeyEventArgs const& e)
                             {
-                                if (static_cast<uint32_t>(e.VirtualKey()) == key && !e.KeyStatus().WasKeyDown) PartnerPress(L"key");
+                                auto type = e.EventType();
+                                if ((type == CoreAcceleratorKeyEventType::KeyDown || type == CoreAcceleratorKeyEventType::SystemKeyDown) && !e.KeyStatus().WasKeyDown)
+                                    HookedKey(static_cast<uint32_t>(e.VirtualKey()));
                             });
-                            Log(L"gamepatch: lock onto partner: keyboard key 0x%02X", key);
+                            Log(L"gamepatch: lock onto partner: keyboard key 0x%02X", GetConfig().partnerLockKey);
                         }
                         catch (...) { Log(L"gamepatch: lock onto partner: no keyboard (0x%08X)", winrt::to_hresult()); }
                     });

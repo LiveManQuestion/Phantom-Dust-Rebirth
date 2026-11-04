@@ -19,7 +19,7 @@ As of Experimental 98. *(untested)* = waiting for a test in a real match.
 ## Voice
 - Voice chat through Epic
 - Tag Team: team-only voice in matches
-- Mind Reading hears the other team *(untested)*
+- Mind Reading hears the other team
 - Mic or Classic voice mode
 
 ## Nametags

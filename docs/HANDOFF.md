@@ -518,15 +518,13 @@ for non-hosts, Quick Join (non-Quick lobbies; Quick only without a usable arsena
 (Experimental 75), the EOS clock correction (joins with a wrong PC clock), and controllers other than Xbox
 (Experimental 40). Also confirmed earlier: Options > Updates switching channel, Arsenal Lab Buy / Sell Arsenal Case.
 The Xbox save import real test is no longer needed (the user, 2026-10-30).
+Confirmed 2026-11-04: Test Arsenal picks, all of it (Experimental 119), Edit Arsenal after a test battle, Mind Reading (85), the lobby's Arsenal Lab > View Stock List after a match (108), the Partner Aim row exists in Settings (saving and match behaviour not yet confirmed). A Conceptual kit doesn't need a test (the user).
 Confirmed 2026-11-03: View Stock List after Test Arsenal (Experimental 108), nametags always on (Experimental 73), the new Rebirth logo (101; good for now), scoreboard names not pickable (99), Options > Updates without Conceptual (105).
 Confirmed 2026-11-02: match freeze fix (Experimental 69), Discord close (70), going back to Stable (77), start-up crash
 fix (78, not seen again), Updates: Off (98).
 
 ## Waiting for testers (as of 2026-10-30)
-1. **Mind Reading** (Experimental 85): a Tag Team match with at least one player per team and voice on. Before
-   casting you don't hear the other team; while Mind Reading is active you do; when it ends, only your team again.
-   Log: "voice: Mind Reading on - the other team is heard too" / "over", and "voice: team channel: X heard / muted
-   (other team)".
+1. ~~Mind Reading~~ (confirmed 2026-11-04).
 2. ~~Match freeze fix~~ (confirmed 2026-11-02).
 3. ~~Discord close fix~~ (confirmed 2026-11-02).
 4. ~~Nametags always on~~ (confirmed 2026-11-03).
@@ -539,7 +537,7 @@ fix (78, not seen again), Updates: Off (98).
    Switch-target never reaches the partner. Log: "target hook running", "lock onto partner on / off ...".
 10. **Modpack guard** (parked 2026-11-03: the user couldn't recreate pewchy's game 2 bug on Experimental 109; come back to it if it's reported again, with a log). Log: 'modpack loaded (N bytes)', 'match starting, N bytes of skill data are modded' each match, 'skill data went back to vanilla (... menu N, game state N) - modpack put back' on a revert. Note which game the mod vanished in.
 11. **Partner Aim setting** (Experimental 118): Multiplayer > Settings shows the row, left / right switches it, A saves, it stays after a restart. Modern: as item 9. Classic, in a Tag Team match: RB or Tab turns the original option on and off (log says which); while on, switch target also reaches the partner.
-12. **Test Arsenal picks** (Experimental 116): Lab > Test Arsenal: your character, your arsenal, the AI's character, the AI's arsenal, map, battle. Portraits on both character screens; each heading right; the battle uses all five picks and you get YOUR arsenal; cancelling any screen returns to the Lab; after a battle the Lab comes straight back and View Stock List works; a real lobby's screens still work afterwards.
+12. ~~Test Arsenal picks~~ (confirmed 2026-11-04, Experimental 119).
 Known, not fixed: players from earlier lobbies keep their links and get reconnected every minute.
 
 ## Feature backlog (could be added / revisited)

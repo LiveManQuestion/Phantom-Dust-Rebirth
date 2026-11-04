@@ -620,13 +620,10 @@ namespace pdnet::gamepatches
         // feedback?", Cheating...), dead without Xbox Live and removed: a Test Arsenal battle goes back to the Lab,
         // any other to the scoreboard, where the feedback screen would have gone.
         constexpr int kFeedbackMenu = 75;
-        // The Lab opened on livedbtl (74) when a test is cancelled sits on the opponent's arsenal choice: its back opens the
-        // multiplayer menu instead.
+        // A Lab opened after a test battle sits on top of the battle (menu 1), and one opened when a test is cancelled on
+        // top of the opponent's arsenal choice: a plain back would return there (a black screen, Experimental 87), so its
+        // back opens the multiplayer menu instead.
         std::atomic<bool> g_labAfterTest{ false };
-        // After a test battle: a Lab opened right on top of the battle (menu 1) has a back that returns into the battle
-        // (a black screen, Experimental 87). The battle now ends in the multiplayer menu (36), as the game's own
-        // scoreboard battle did, and the Lab opens on top of it a moment later (OpenPendingLab).
-        std::atomic<ULONGLONG> g_labPendingAt{ 0 };
         // The Lab's scripts read menu variables 0, 1 and 2 (command 14; DAT_140533c10, ints) as they start: variable 0 & 0xff
         // picks the save's list (g5 #111, +0xb50), and only lists 0 and 1 exist (FUN_14015a520). The multiplayer menu sets
         // all three to 0 just before opening the Lab (livemain_en.ssb 0x175c); when pdnet opens it, nothing did. A battle
@@ -650,6 +647,34 @@ namespace pdnet::gamepatches
         enum TestPick { kPickingNone, kPickingStage, kPickingCharacter };
         std::atomic<int> g_testPicking{ kPickingNone };
         std::atomic<int> g_testStage{ -1 }, g_testLayout{ 0 }, g_testCharacter{ -1 };
+        // Those two menus draw from the multiplayer texture file: "MNET" in slot 3 (window_chara and so on), which the
+        // multiplayer menu frees right before it opens the Lab (livemain_en.ssb 0x16e4) and loads again when it comes back
+        // (0x1a84). Without it the character screen is only its text (Experimental 111). So it's loaded as the scripts do
+        // (menu command 16 until it starts, 17 until it's done; each is one try). livedbtl frees it again before the battle.
+        constexpr int kMultiplayerTextures = 3;
+        void LoadMultiplayerTextures()
+        {
+            auto load = reinterpret_cast<int64_t (*)(int64_t*)>(At(0x1402076b0));
+            auto done = reinterpret_cast<int64_t (*)(int64_t*)>(At(0x1402076d0));
+            int64_t args[8] = { kMultiplayerTextures, reinterpret_cast<int64_t>("MNET") };
+            ULONGLONG start = GetTickCount64();
+            while (!load(args))
+            {
+                if (GetTickCount64() - start > 3000) { Log(L"gamepatch: Test Arsenal: MNET textures not loaded"); return; }
+                Sleep(5);
+            }
+            while (!done(args))
+            {
+                if (GetTickCount64() - start > 3000) { Log(L"gamepatch: Test Arsenal: MNET textures not ready after 3 s"); return; }
+                Sleep(5);
+            }
+            Log(L"gamepatch: Test Arsenal: MNET textures loaded (%llu ms)", GetTickCount64() - start);
+        }
+        void FreeMultiplayerTextures()
+        {
+            int64_t args[8] = { kMultiplayerTextures };
+            reinterpret_cast<int64_t (*)(int64_t*)>(At(0x1402077d0))(args);
+        }
         int16_t& MenuParam(int menu, int slot) { return *reinterpret_cast<int16_t*>(At(0x1403fa3d8 + menu * 0x18 + slot * 2)); }
         bool CopyArsenalToOpponent(int index); // (below)
         using PushMenuFn = int (*)(int64_t manager, int menu, char force);
@@ -848,8 +873,12 @@ namespace pdnet::gamepatches
             if (menu == kFeedbackMenu)
             {
                 bool test = g_testBattle.exchange(false);
-                int to = test ? kMultiplayerMenu : kScoreboardMenu;
-                if (test) g_labPendingAt = GetTickCount64(); // the Lab follows from the multiplayer menu (OpenPendingLab)
+                int to = test ? kLabMenu : kScoreboardMenu;
+                if (test)
+                {
+                    g_labAfterTest = true;
+                    ResetLabVariables();
+                }
                 Log(L"menu: player feedback screen skipped - menu %d instead", to);
                 return g_pushMenu(manager, to, force);
             }
@@ -892,6 +921,7 @@ namespace pdnet::gamepatches
             {
                 if (MenuParam(kScoreBattleMenu, 0) == 1 && CopyArsenalToOpponent(*reinterpret_cast<int32_t*>(At(0x1403de844))))
                 {
+                    LoadMultiplayerTextures();
                     *reinterpret_cast<int32_t*>(At(0x14051775c)) = -1;
                     g_testPicking = kPickingStage;
                     *At(0x1404bbc34) = 0;
@@ -912,6 +942,7 @@ namespace pdnet::gamepatches
                     g_testBattle = false;
                     g_labAfterTest = true; // on top of the opponent's arsenal choice: the Lab's back goes to the multiplayer menu
                     ResetLabVariables();
+                    FreeMultiplayerTextures();
                     Log(L"gamepatch: Test Arsenal: no %s picked - back to the Lab", stage ? L"map" : L"character");
                     return g_pushMenu(manager, kLabMenu, 0);
                 }
@@ -2494,28 +2525,6 @@ namespace pdnet::gamepatches
             OpenTestArsenal();
         }
 
-        // After a test battle, once the multiplayer menu is on screen with no input for 0.3 s: the Lab on top of it.
-        void OpenPendingLab(int32_t event)
-        {
-            ULONGLONG at = g_labPendingAt;
-            if (!at) return;
-            int64_t manager = MenuManager();
-            int current = CurrentMenu(manager);
-            if (current != kMultiplayerMenu)
-            {
-                if (current == 1 || current == kFeedbackMenu || GetTickCount64() - at < 10000) return; // still on its way
-                g_labPendingAt = 0;
-                return;
-            }
-            if (event != 0 || GetTickCount64() - at < 300) return;
-            g_labPendingAt = 0;
-            Log(L"gamepatch: Test Arsenal over - back to the Lab");
-            ResetLabVariables();
-            *At(0x1404bbc34) = 0;
-            g_pushMenu(manager, kLabMenu, 0);
-            *reinterpret_cast<char*>(manager + 0x1062c) = 0; // no picked label on the new menu (see OpenCaseMenu)
-        }
-
         bool LogItems(const char* added, int64_t* args, int64_t& result)
         {
             // Only the Options scripts add $KEYBOARD items. No menu check: the list is built before menu 4 is current.
@@ -2621,7 +2630,6 @@ namespace pdnet::gamepatches
             int64_t result = g_setState(args);
             CheckSendLogPick(event);
             OpenPendingTestArsenal(event);
-            OpenPendingLab(event);
             SubscribePartnerKeyOnce();
             return result;
         }

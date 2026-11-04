@@ -646,7 +646,7 @@ namespace pdnet::gamepatches
         enum TestPick { kPickingNone, kPickingCharacter, kPickingArsenal, kPickingOpponentCharacter, kPickingOpponentArsenal, kPickingStage };
         std::atomic<int> g_testPicking{ kPickingNone };
         std::atomic<int> g_testStage{ -1 }, g_testLayout{ 0 }, g_testCharacter{ -1 }, g_testOpponentCharacter{ -1 }, g_testArsenal{ 0 };
-        // Menu command 88, line 1: the heading. These menus set none of their own (livestagesel does).
+        // Menu command 88, line 1: the heading. These menus set none of their own, so the last one stays on screen.
         void SetMenuHeading(const char* text)
         {
             int64_t heading[8] = { 1, reinterpret_cast<int64_t>(text), 0 };
@@ -975,6 +975,7 @@ namespace pdnet::gamepatches
                     *reinterpret_cast<int32_t*>(At(0x1403de844)) = g_testArsenal; // the battle gives the player this one
                     *reinterpret_cast<int32_t*>(At(0x14051775c)) = -1;
                     MenuVariables()[0] = 0;
+                    SetMenuHeading("LEVEL SELECT");
                     g_testPicking = kPickingStage;
                     return g_pushMenu(manager, kStageMenu, 0);
                 default: // kPickingStage

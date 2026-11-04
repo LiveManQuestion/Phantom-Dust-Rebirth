@@ -1478,7 +1478,11 @@ namespace pdnet::gamepatches
                     {
                         int64_t renamed[8];
                         memcpy(renamed, args, sizeof(renamed));
-                        renamed[0] = reinterpret_cast<int64_t>(g_testPicking == kPickingOpponentCharacter ? "Select the OPPONENT's character." : "Select YOUR character.");
+                        bool opponent = g_testPicking == kPickingOpponentCharacter;
+                        renamed[0] = reinterpret_cast<int64_t>(opponent ? "Choose the character the AI OPPONENT plays as." : "Choose the character YOU play as.");
+                        // The screen has no heading of its own: menu command 88 line 1, as other menus set "LEVEL LIST".
+                        int64_t heading[8] = { 1, reinterpret_cast<int64_t>(opponent ? "AI OPPONENT'S CHARACTER" : "YOUR CHARACTER"), 0 };
+                        reinterpret_cast<int64_t (*)(int64_t*)>(At(0x140207650))(heading);
                         return g_addItem(renamed);
                     }
                     char previous[80];

@@ -544,6 +544,7 @@ Known, not fixed: players from earlier lobbies keep their links and get reconnec
 
 ## Feature backlog (could be added / revisited)
 Parked ideas and half-finished features, newest first. Each has its notes earlier in this file.
+0. **Auto-updater on Linux** (paused by the user 2026-11-03/04). Linux builds have no pdlaunch, so the updater would go inside pdnet.dll. Open question: does the Windows-built pdnet.dll run under wine-uwp, renamed Microsoft.Xbox.Services.dll? If yes, it can use the same releases. If no, each release also needs a Linux build (CI with the EOS and Windows SDKs; check the EOS license). The user says Linux runs today, with crossplay; no Linux log seen yet.
 1. **Loading-screen timeout** (parked 2026-10-21). Step 1 was built and tested (commit 4cf65cb, observe-only "loading watchdog":
    stubs on the menu 0x1403eefe0 x136 and session 0x1403f1150 x196 command tables log a command polled with the same result
    for 30 s and screens up for 60 s; normal baseline = title screen menu 7, commands 6/109). Taken out of the build by request.

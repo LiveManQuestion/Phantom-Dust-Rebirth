@@ -52,6 +52,7 @@ As of Experimental 98. *(untested)* = waiting for a test in a real match.
 
 ## Controls
 - PlayStation, Nintendo and other controllers, with rumble
+- B skips start-up logos and movies, and leaves a hung match load *(untested)*
 - Lock onto partner: RB / Tab (key configurable), Modern or Classic in Settings *(untested)*
 
 ## Other

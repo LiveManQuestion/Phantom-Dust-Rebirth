@@ -646,6 +646,7 @@ namespace pdnet::gamepatches
         enum TestPick { kPickingNone, kPickingCharacter, kPickingArsenal, kPickingOpponentCharacter, kPickingOpponentArsenal, kPickingStage };
         std::atomic<int> g_testPicking{ kPickingNone };
         std::atomic<int> g_testStage{ -1 }, g_testLayout{ 0 }, g_testCharacter{ -1 }, g_testOpponentCharacter{ -1 }, g_testArsenal{ 0 };
+        std::atomic<ULONGLONG> g_matchLoadingSince{ 0 }; // when the load into the current match began (BackButtonTick); 0: none
         // Menu command 88, line 1: the heading. These menus set none of their own, so the last one stays on screen.
         void SetMenuHeading(const char* text)
         {
@@ -2032,8 +2033,28 @@ namespace pdnet::gamepatches
         SessionCommandFn g_optionChanged = nullptr;
         using InputFn = int64_t (*)(int64_t* args);
 
+        // B during the start-up logos. playdatasel's wait routine (0x7e8) counts its frames in a local: i += 1, then, when its
+        // second argument is set, i = g10 #17 (0). PatchLogoWait has it call this instead (arguments: that argument, i), so
+        // B can end the wait; the logo then fades out as usual.
+        constexpr int kStartMenu = 7, kLogoReturnBig = 0x7fffffff;
+        int64_t LogoWait(int32_t* args)
+        {
+            int64_t input[2] = { 0, 0 };
+            bool cancel = (reinterpret_cast<InputFn>(At(0x1402168a0))(input) & 0x2020) != 0;
+            int64_t counted = args[2];
+            if (args[0])
+            {
+                int64_t none[8] = {};
+                counted = (*reinterpret_cast<InputFn*>(At(0x1403ddde0 + 17 * 8)))(none);
+            }
+            static std::atomic<bool> told{ false };
+            if (cancel && !told.exchange(true)) Log(L"gamepatch: B: start-up logo skipped");
+            return cancel ? kLogoReturnBig : counted;
+        }
+
         int64_t HookedOptionChanged(int32_t* args)
         {
+            if (args && CurrentMenu(MenuManager()) == kStartMenu) return LogoWait(args);
             if (!InSettings() || !args) return g_optionChanged ? g_optionChanged(args) : 0;
             int64_t input[2] = { 0, 0 };
             int64_t buttons = reinterpret_cast<InputFn>(At(0x1402168a0))(input); // g1 #37 (0): the buttons, as the script reads them
@@ -2279,6 +2300,9 @@ namespace pdnet::gamepatches
         {
             const char* kSave = g_confirmingSave ? kConfirmBar : kNormalBar;
             char text[64];
+            if (args && args[0] == 1 && CopyString(reinterpret_cast<const char*>(args[1]), text, sizeof(text)) && strcmp(text, "LOADING") == 0 &&
+                CurrentMenu(MenuManager()) == kLobbyMenu && !g_matchLoadingSince)
+                g_matchLoadingSince = GetTickCount64(); // the lobby's loading screen, on the way into a match
             if (args && (InSettings() || GetTickCount64() - g_settingsOpenedAt < 500) && CopyString(reinterpret_cast<const char*>(args[1]), text, sizeof(text)) &&
                 (strcmp(text, "\a7#Change \a580r\a3#Back") == 0 || strcmp(text, "\a8#Select \a7#Change \a580r\a3#Back") == 0))
             {
@@ -2748,6 +2772,118 @@ namespace pdnet::gamepatches
             bool caseRows = WrapCommand<MenuCommandFn>(0x1403eefe0 + 59 * 8, 0x140207ec0, &HookedAddIdItem, g_addIdItem, L"Arsenal Lab rows");
             Log(L"gamepatch: Arsenal Lab Buy / Sell Arsenal Case %s", caseRows && CaseItemsReady() ? L"ready" : L"NOT added");
             Log(L"gamepatch: Options > Send Log %s (log_webhook %s)", g_logItemReady ? L"ready" : L"NOT added", GetConfig().logWebhook.empty() ? L"not set" : L"set");
+        }
+
+        // B to get out of what otherwise can only be waited for. (Signing in, searching, joining and creating a session have
+        // the game's own Cancel.)
+        // - Start-up logos: LogoWait, through PatchLogoWait. Runs from pdnet's start: the logos are over by the time Apply runs.
+        // - Movies: 0x14050e123 is the game's "stop this movie" flag (FUN_1401bdb00 -> FUN_1401bde70, also used when a file
+        //   won't open; FUN_1401bcbe0 clears it); 0x1405b1790 is the playing movie.
+        // - The load into a match: only once it has hung, as leaving a load that's still going could hang the others. The
+        //   lobby's LOADING screen (HookedButtonBar) or game states 1-5 (normally 3.5 s: 2, then a 90-frame 5) for
+        //   kHungLoadMs. Still in the lobby: out through menu 84, as a lost lobby is, which leaves the session and ends
+        //   in the multiplayer menu. In the match: the pause menu's Give Up (FUN_140211940), which ends in the lobby.
+        constexpr ULONGLONG kHungLoadMs = 30000;
+        bool CancelHeld()
+        {
+            int64_t input[2] = { 0, 0 };
+            return (reinterpret_cast<InputFn>(At(0x1402168a0))(input) & 0x2020) != 0;
+        }
+
+        // Words in playdatasel_en.ssb's wait routine: `if (arg 1) i = g10 #17 (0)` -> `i = session command 154 (i, arg 1)`.
+        bool PatchLogoWait(uint8_t* script)
+        {
+            __try
+            {
+                auto code = reinterpret_cast<uint32_t*>(script);
+                if (code[0x844 / 4] == 0x42B20201) return true;
+                if (code[0x83C / 4] != 0x00010009 || code[0x840 / 4] != 0x00040207 || code[0x844 / 4] != 0x0000000E ||
+                    code[0x848 / 4] != 0xA0110101 || code[0x84C / 4] != 0x00000010 || code[0x850 / 4] != 0xFFFF000A) return false;
+                code[0x83C / 4] = 0xFFFF0009; // push i
+                code[0x840 / 4] = 0x00010009; // push arg 1
+                code[0x844 / 4] = 0x42B20201; // call session command 154, 2 arguments
+                code[0x848 / 4] = 0x00000010; // push the result
+                code[0x84C / 4] = 0xFFFF000A; // i =
+                code[0x850 / 4] = 0x00000007; // jump to the next word
+                return true;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+        }
+
+        void BackButtonTick(int64_t manager)
+        {
+            int current = CurrentMenu(manager);
+            if (current == kStartMenu && g_optionChanged)
+            {
+                static uint8_t* patched = nullptr;
+                uint8_t* script = *reinterpret_cast<uint8_t**>(At(0x1403fa3d0 + kStartMenu * 0x18 + 0x10));
+                if (script && script != patched)
+                {
+                    patched = script;
+                    Log(L"gamepatch: B: start-up logos %s", PatchLogoWait(script) ? L"can be skipped" : L"can't be skipped - script not as expected");
+                }
+            }
+            if (*reinterpret_cast<uint64_t*>(At(0x1405b1790)) && CancelHeld() && !*At(0x14050e123))
+            {
+                *At(0x14050e123) = 1;
+                Log(L"gamepatch: B: movie stopped");
+            }
+            int32_t state = *reinterpret_cast<volatile int32_t*>(At(0x1404bc950));
+            bool loading = state >= 1 && state <= 5, inLobby = current == kLobbyMenu;
+            ULONGLONG since = g_matchLoadingSince, now = GetTickCount64();
+            if (!loading && !(inLobby && since))
+            {
+                g_matchLoadingSince = 0;
+                return;
+            }
+            if (!since) { g_matchLoadingSince = now; return; }
+            if (now - since < kHungLoadMs || AiBattle()) return;
+            static ULONGLONG toldFor = 0;
+            if (toldFor != since)
+            {
+                toldFor = since;
+                Log(L"gamepatch: B: the load into the match has taken %llu s (menu %d, game state %d) - B leaves it", (now - since) / 1000, current, state);
+                if (state == 0) SetMenuHeading("STUCK LOADING? PRESS B TO LEAVE");
+            }
+            if (!CancelHeld() || !g_pushMenu) return;
+            g_matchLoadingSince = 0;
+            Log(L"gamepatch: B: leaving the hung load (menu %d, game state %d)", current, state);
+            if (loading)
+            {
+                reinterpret_cast<int64_t (*)()>(At(0x140211940))(); // Give Up
+                return;
+            }
+            *At(0x1404bbc34) = 0;
+            g_pushMenu(manager, kLobbyLostMenu, 0);
+            *reinterpret_cast<char*>(manager + 0x1062c) = 0; // no picked label on the new menu (see OpenCaseMenu)
+        }
+
+        using MenuFrameFn = void (*)(int64_t manager);
+        MenuFrameFn g_menuFrame = nullptr;
+        void HookedMenuFrame(int64_t manager)
+        {
+            g_menuFrame(manager);
+            BackButtonTick(manager);
+        }
+
+        // The menu manager's per-frame update, FUN_140248230: its vtable slot. Scripts have run when it returns.
+        void InstallBackButton()
+        {
+            static std::once_flag once;
+            std::call_once(once, []
+            {
+                if (!WrapCommand<SessionCommandFn>(0x1403f1150 + 154 * 8, 0x140214d60, &HookedOptionChanged, g_optionChanged, L"settings rows and logo skip")) return;
+                uint8_t* slot = At(0x14048e358);
+                if (*reinterpret_cast<uint8_t**>(slot) != At(0x140248230))
+                {
+                    Log(L"gamepatch: B button skipped - the game code is not what this pdnet expects");
+                    return;
+                }
+                std::vector<uint8_t> hook;
+                Put64(hook, reinterpret_cast<uint64_t>(&HookedMenuFrame));
+                g_menuFrame = reinterpret_cast<MenuFrameFn>(At(0x140248230));
+                if (!Write(slot, hook)) { g_menuFrame = nullptr; Log(L"gamepatch: B button failed (VirtualProtect error %lu)", GetLastError()); }
+            });
         }
 
         // pdlaunch keeps the game at splash_volume while the title screen or intro is on (menu 7 playdatasel, 80, or no
@@ -3554,6 +3690,8 @@ namespace pdnet::gamepatches
         }
     }
 
+    void InstallEarlyHooks() { InstallBackButton(); }
+
     bool HookFileOpens()
     {
         static std::atomic<bool> done{ false };
@@ -3597,8 +3735,8 @@ namespace pdnet::gamepatches
             WrapCommand<MenuCommandFn>(0x1403eefe0 + 88 * 8, 0x140207650, &HookedButtonBar, g_buttonBar, L"settings save button");
             WrapCommand<MenuCommandFn>(0x1403eefe0 + 42 * 8, 0x140207f00, &HookedDrawWindow, g_drawWindow, L"settings save pop-up");
             WrapCommand<NativeFn>(0x1403fb108, 0x1402168a0, &HookedButtons, g_buttons, L"settings save confirmation");
-            if (WrapCommand<SessionCommandFn>(0x1403f1150 + 154 * 8, 0x140214d60, &HookedOptionChanged, g_optionChanged, L"settings rows"))
-                Log(L"gamepatch: in-game Settings ready (multiplayer menu > Settings)");
+            InstallBackButton(); // also takes session command 154, which the Settings rows use
+            if (g_optionChanged) Log(L"gamepatch: in-game Settings ready (multiplayer menu > Settings)");
             if (WrapCommand<MenuCommandFn>(0x1403eefe0 + 40 * 8, 0x140207e20, &HookedAddItem, g_addItem, L"menu item names"))
                 Log(L"gamepatch: menu items renamed as they are added (Quick Join, Lobby Browser%s)", GetConfig().scoreboard ? L", Global scoreboards only" : L"");
             SoundOptions(); // Options > Sound: Aura Particle Beeps

@@ -72,9 +72,8 @@ Updates: Main menu > Options > Updates picks Stable or Experimental builds, or O
                          classic: the original Voice Chat option - Off means you neither talk nor hear
   voice_listen=          on/off: hear other players (mic mode only)
   partner_aim=           what the partner lock input does in a match (Multiplayer > Settings > Partner Aim):
-                         modern: locks onto your partner; classic: turns lock_onto_partner on/off
-  lock_onto_partner=     on/off, classic only: switch target can also reach your partner
-                         (Multiplayer > Settings > Lock Partner)
+                         modern: locks onto your partner; classic: turns the original Lock Onto Partner option on/off,
+                         so switch target can also reach your partner
   partner_lock_key=      keyboard key for that input in a match (default Tab; none = off).
                          On a controller it is RB.
   splash_volume=         % of your volume from the start-up logos until you are past the title screen

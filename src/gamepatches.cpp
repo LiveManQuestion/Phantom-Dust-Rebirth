@@ -2681,7 +2681,6 @@ namespace pdnet::gamepatches
             size_t n = strlen(state);
             g_soundWindow = n >= 4 && strcmp(state + n - 4, "SOUN") == 0;
         }
-        void SubscribePartnerKeyOnce(); // lock onto partner's keyboard key (below)
         int64_t HookedSetState(int64_t* args)
         {
             NoteState(args);
@@ -2690,7 +2689,6 @@ namespace pdnet::gamepatches
             int64_t result = g_setState(args);
             CheckSendLogPick(event);
             OpenPendingTestArsenal(event);
-            SubscribePartnerKeyOnce();
             return result;
         }
         int64_t HookedSetState12(int64_t* args) { NoteState(args); return g_setState12(args); }
@@ -3545,7 +3543,8 @@ namespace pdnet::gamepatches
             return result;
         }
 
-        // From the dispatcher's AcceleratorKeyActivated: KeyDown never saw the key in a match (Experimental 94-120).
+        // Keys come from the game's own key-down handler, FUN_140008490 (this, sender, KeyEventArgs): pdnet's subscriptions to
+        // CoreWindow KeyDown (Experimental 94-120) and the dispatcher's AcceleratorKeyActivated (121) never reported a key.
         void HookedKey(uint32_t key)
         {
             int32_t* assigning = reinterpret_cast<int32_t*>(At(0x1403dd3d8));
@@ -3556,6 +3555,22 @@ namespace pdnet::gamepatches
                 return;
             }
             if (key && key == GetConfig().partnerLockKey) PartnerPress(L"key");
+        }
+
+        // KeyEventArgs: get_VirtualKey at vtable +0x30, get_KeyStatus at +0x38 (CorePhysicalKeyStatus: WasKeyDown at byte 10).
+        using GameKeyFn = int64_t (*)(void* self, void* sender, void** args);
+        GameKeyFn g_gameKey = nullptr;
+        int64_t HookedGameKey(void* self, void* sender, void** args)
+        {
+            int64_t result = g_gameKey(self, sender, args);
+            if (!args) return result;
+            void** vtable = reinterpret_cast<void**>(*args);
+            int32_t key = 0;
+            uint8_t status[12] = {};
+            auto read = reinterpret_cast<HRESULT (__stdcall*)(void*, void*)>(vtable[6]);
+            auto readStatus = reinterpret_cast<HRESULT (__stdcall*)(void*, void*)>(vtable[7]);
+            if (SUCCEEDED(read(args, &key)) && SUCCEEDED(readStatus(args, status)) && !status[10]) HookedKey(static_cast<uint32_t>(key));
+            return result;
         }
 
         void PartnerLock()
@@ -3590,40 +3605,12 @@ namespace pdnet::gamepatches
             }).detach();
             uint32_t key = GetConfig().partnerLockKey;
             Log(L"gamepatch: lock onto partner ready (RB%s)", key ? L" or the partner_lock_key key, once the menus run" : L"");
+            std::vector<uint8_t> start = { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x56, 0x48, 0x83, 0xEC, 0x40 }; // mov [rsp+8],rbx / push rsi / sub rsp,40h
+            g_gameKey = reinterpret_cast<GameKeyFn>(InlineHookBytes(0x140008490, start, start, reinterpret_cast<void*>(&HookedGameKey), L"keyboard key"));
+            Log(L"gamepatch: lock onto partner: keyboard key 0x%02X (%s)", key, g_gameKey ? L"hooked" : L"NOT hooked");
             bool row = WrapCommand<NativeFn>(0x1403ddde0 + 18 * 8, 0x1400be7f0, &HookedKeyRow, g_keyRow, L"partner lock key row") &&
                        WrapCommand<NativeFn>(0x1403ddde0 + 20 * 8, 0x1400be990, &HookedKeyDefaults, g_keyDefaults, L"partner lock key default");
             Log(L"gamepatch: Options > Keyboard: Lock Onto Partner row %s", row ? L"ready" : L"NOT added");
-        }
-
-        // The key comes from the game's window (KeyDown). Subscribing from pdnet's own thread right at injection crashed the
-        // game at start-up (Experimental 94: a WinRT error in the window's thread, twinapi.appcore 0xc000027b), so it is done
-        // once from the game's thread when its menus run (HookedSetState), like the Settings name typing, errors caught.
-        void SubscribePartnerKeyOnce()
-        {
-            static std::once_flag once;
-            std::call_once(once, []
-            {
-                try
-                {
-                    using namespace winrt::Windows::UI::Core;
-                    auto window = winrt::Windows::ApplicationModel::Core::CoreApplication::MainView().CoreWindow();
-                    window.Dispatcher().RunAsync(CoreDispatcherPriority::Normal, [window]
-                    {
-                        try
-                        {
-                            window.Dispatcher().AcceleratorKeyActivated([](CoreDispatcher const&, AcceleratorKeyEventArgs const& e)
-                            {
-                                auto type = e.EventType();
-                                if ((type == CoreAcceleratorKeyEventType::KeyDown || type == CoreAcceleratorKeyEventType::SystemKeyDown) && !e.KeyStatus().WasKeyDown)
-                                    HookedKey(static_cast<uint32_t>(e.VirtualKey()));
-                            });
-                            Log(L"gamepatch: lock onto partner: keyboard key 0x%02X", GetConfig().partnerLockKey);
-                        }
-                        catch (...) { Log(L"gamepatch: lock onto partner: no keyboard (0x%08X)", winrt::to_hresult()); }
-                    });
-                }
-                catch (...) { Log(L"gamepatch: lock onto partner: no keyboard (0x%08X)", winrt::to_hresult()); }
-            });
         }
     }
 

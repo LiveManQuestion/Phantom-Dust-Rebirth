@@ -631,23 +631,28 @@ namespace pdnet::gamepatches
         // (PDUWP+0x15a257, FUN_14015a230 with list 2; Experimental 99 and 100; the dump shows variable 0 = 2).
         int32_t* MenuVariables() { return reinterpret_cast<int32_t*>(At(0x140533c10)); }
         void ResetLabVariables() { memset(MenuVariables(), 0, 3 * sizeof(int32_t)); }
-        // Test Arsenal first opens livearsel (67) on its own for the opponent's arsenal. livearsel in scoreboard mode (its
-        // menu parameter 0 = 1) stores a pick with g4 #575 (0x1403de844) and sets livedbtl's parameter 0 to 1, or to 2 when
-        // cancelled, then goes back; that back (HookedPopMenu) copies the pick in as the opponent and opens livedbtl (74),
-        // where the player picks their own arsenal.
-        constexpr int kArsenalPickMenu = 67;
-        std::atomic<bool> g_testPickingOpponent{ false };
-        // Then the opponent's character, the map and the player's character, on the multiplayer menus: livestagesel (47; g4 #576 stores the pick in
-        // 0x14051775c, the map id in 0x140527bc8 and a random layout in 0x140527c54) and livecharasel (46; g4 #571 stores it
-        // in 0x140527bc0). Both end with a back, picked or not: each is opened with its value at -1, so -1 means cancelled.
-        // livecharasel's back leaves the session unless menu variable 0 is 1, as the lobby sets it before opening it.
+        // Test Arsenal asks, in order: the player's character and arsenal, the AI's character and arsenal, the map; then
+        // opens livedbtl (74) with its menu parameter 0 = 1, which starts the battle. Each step is on the game's own menu and
+        // ends with a back (HookedPopMenu), picked or not, so the next step opens from there:
+        // - livecharasel (46; g4 #571 stores the pick in 0x140527bc0): opened with that at -1. Its back leaves the session
+        //   unless menu variable 0 is 1, as the lobby sets it before opening it.
+        // - livearsel (67) in scoreboard mode (its menu parameter 0 = 1) stores a pick with g4 #575 (0x1403de844, the
+        //   arsenal the battle gives the player) and sets livedbtl's parameter 0 to 1, or to 2 when cancelled.
+        // - livestagesel (47; g4 #576 stores the pick in 0x14051775c, the map id in 0x140527bc8 and a random layout in
+        //   0x140527c54): opened with that at -1.
         // The scoreboard battle (g4 #661 = FUN_140214770) has map 2, layout 0 and character 0 built in, so HookedTestStart
         // passes the picks to its FUN_140128990 (the match setup, 0x48 per player: the character at +8; online, the same field).
-        constexpr int kCharacterMenu = 46, kStageMenu = 47;
-        enum TestPick { kPickingNone, kPickingOpponentCharacter, kPickingStage, kPickingCharacter };
+        constexpr int kArsenalPickMenu = 67, kCharacterMenu = 46, kStageMenu = 47;
+        enum TestPick { kPickingNone, kPickingCharacter, kPickingArsenal, kPickingOpponentCharacter, kPickingOpponentArsenal, kPickingStage };
         std::atomic<int> g_testPicking{ kPickingNone };
-        std::atomic<int> g_testStage{ -1 }, g_testLayout{ 0 }, g_testCharacter{ -1 }, g_testOpponentCharacter{ -1 };
-        // Those two menus draw from the multiplayer texture file: "MNET" in slot 3 (window_chara and so on), which the
+        std::atomic<int> g_testStage{ -1 }, g_testLayout{ 0 }, g_testCharacter{ -1 }, g_testOpponentCharacter{ -1 }, g_testArsenal{ 0 };
+        // Menu command 88, line 1: the heading. These menus set none of their own (livestagesel does).
+        void SetMenuHeading(const char* text)
+        {
+            int64_t heading[8] = { 1, reinterpret_cast<int64_t>(text), 0 };
+            reinterpret_cast<int64_t (*)(int64_t*)>(At(0x140207650))(heading);
+        }
+        // Those menus draw from the multiplayer texture file: "MNET" in slot 3 (window_chara and so on), which the
         // multiplayer menu frees right before it opens the Lab (livemain_en.ssb 0x16e4) and loads again when it comes back
         // (0x1a84). Without it the character screen is only its text (Experimental 111). So it's loaded as the scripts do
         // (menu command 16 until it starts, 17 until it's done; each is one try). livedbtl frees it again before the battle.
@@ -917,64 +922,70 @@ namespace pdnet::gamepatches
             int64_t manager = MenuManager();
             int current = CurrentMenu(manager);
             Log(L"menu: back (from %d)", current);
-            if (current == kArsenalPickMenu && g_testPickingOpponent.exchange(false))
+            int step = g_testPicking;
+            if (step != kPickingNone && current == (step == kPickingStage ? kStageMenu : step == kPickingCharacter || step == kPickingOpponentCharacter ? kCharacterMenu : kArsenalPickMenu))
             {
-                if (MenuParam(kScoreBattleMenu, 0) == 1 && CopyArsenalToOpponent(*reinterpret_cast<int32_t*>(At(0x1403de844))))
-                {
-                    LoadMultiplayerTextures();
-                    *reinterpret_cast<int32_t*>(At(0x140527bc0)) = -1;
-                    MenuVariables()[0] = 1;
-                    g_testPicking = kPickingOpponentCharacter;
-                    *At(0x1404bbc34) = 0;
-                    return g_pushMenu(manager, kCharacterMenu, 0);
-                }
-                g_testBattle = false;
-                Log(L"gamepatch: Test Arsenal: no opponent arsenal picked - back to the Lab");
-                return g_popMenu();
-            }
-            if ((current == kStageMenu && g_testPicking == kPickingStage) || (current == kCharacterMenu && (g_testPicking == kPickingCharacter || g_testPicking == kPickingOpponentCharacter)))
-            {
-                bool stage = current == kStageMenu;
-                int picked = *reinterpret_cast<int32_t*>(At(stage ? 0x14051775c : 0x140527bc0));
                 *At(0x1404bbc34) = 0;
+                bool arsenal = current == kArsenalPickMenu;
+                int picked = arsenal ? (MenuParam(kScoreBattleMenu, 0) == 1 ? *reinterpret_cast<int32_t*>(At(0x1403de844)) : -1)
+                                     : *reinterpret_cast<int32_t*>(At(current == kStageMenu ? 0x14051775c : 0x140527bc0));
                 if (picked < 0)
                 {
                     g_testPicking = kPickingNone;
                     g_testBattle = false;
-                    g_labAfterTest = true; // on top of the opponent's arsenal choice: the Lab's back goes to the multiplayer menu
                     ResetLabVariables();
                     FreeMultiplayerTextures();
-                    Log(L"gamepatch: Test Arsenal: no %s picked - back to the Lab", stage ? L"map" : L"character");
+                    Log(L"gamepatch: Test Arsenal: nothing picked on menu %d - back to the Lab", current);
+                    if (step == kPickingCharacter) return g_popMenu(); // right on top of the Lab
+                    g_labAfterTest = true;
                     return g_pushMenu(manager, kLabMenu, 0);
                 }
-                if (stage)
+                auto openCharacter = [&](int next)
                 {
-                    g_testStage = *reinterpret_cast<int32_t*>(At(0x140527bc8));
-                    g_testLayout = *reinterpret_cast<int32_t*>(At(0x140527c54));
-                    Log(L"gamepatch: Test Arsenal: map %d, layout %d", g_testStage.load(), g_testLayout.load());
                     *reinterpret_cast<int32_t*>(At(0x140527bc0)) = -1;
                     MenuVariables()[0] = 1;
-                    g_testPicking = kPickingCharacter;
+                    g_testPicking = next;
                     return g_pushMenu(manager, kCharacterMenu, 0);
-                }
-                if (g_testPicking == kPickingOpponentCharacter)
+                };
+                auto openArsenal = [&](int next, const char* heading)
                 {
+                    MenuVariables()[0] = 0;
+                    MenuParam(kArsenalPickMenu, 0) = 1; // livearsel in scoreboard mode
+                    MenuParam(kScoreBattleMenu, 0) = 0;
+                    SetMenuHeading(heading);
+                    g_testPicking = next;
+                    return g_pushMenu(manager, kArsenalPickMenu, 0);
+                };
+                switch (step)
+                {
+                case kPickingCharacter:
+                    g_testCharacter = picked;
+                    Log(L"gamepatch: Test Arsenal: character %d", picked);
+                    return openArsenal(kPickingArsenal, "YOUR ARSENAL");
+                case kPickingArsenal:
+                    g_testArsenal = picked;
+                    Log(L"gamepatch: Test Arsenal: arsenal %d", picked);
+                    return openCharacter(kPickingOpponentCharacter);
+                case kPickingOpponentCharacter:
                     g_testOpponentCharacter = picked;
                     Log(L"gamepatch: Test Arsenal: opponent's character %d", picked);
+                    return openArsenal(kPickingOpponentArsenal, "AI OPPONENT'S ARSENAL");
+                case kPickingOpponentArsenal:
+                    CopyArsenalToOpponent(picked);
+                    *reinterpret_cast<int32_t*>(At(0x1403de844)) = g_testArsenal; // the battle gives the player this one
                     *reinterpret_cast<int32_t*>(At(0x14051775c)) = -1;
                     MenuVariables()[0] = 0;
                     g_testPicking = kPickingStage;
                     return g_pushMenu(manager, kStageMenu, 0);
+                default: // kPickingStage
+                    g_testStage = *reinterpret_cast<int32_t*>(At(0x140527bc8));
+                    g_testLayout = *reinterpret_cast<int32_t*>(At(0x140527c54));
+                    Log(L"gamepatch: Test Arsenal: map %d, layout %d - starting", g_testStage.load(), g_testLayout.load());
+                    g_testPicking = kPickingNone;
+                    ResetLabVariables();
+                    MenuParam(kScoreBattleMenu, 0) = 1; // livedbtl: start the battle
+                    return g_pushMenu(manager, kScoreBattleMenu, 0);
                 }
-                g_testCharacter = picked;
-                Log(L"gamepatch: Test Arsenal: character %d", picked);
-                ResetLabVariables();
-                g_testPicking = kPickingNone;
-                // livearsel sets no heading of its own (menu command 88, line 1), so it would keep "YOUR CHARACTER".
-                int64_t heading[8] = { 1, reinterpret_cast<int64_t>("YOUR ARSENAL"), 0 };
-                reinterpret_cast<int64_t (*)(int64_t*)>(At(0x140207650))(heading);
-                MenuParam(kScoreBattleMenu, 0) = 0; // livedbtl: open the arsenal choice (the player's own) first
-                return g_pushMenu(manager, kScoreBattleMenu, 0);
             }
             if (current == kLabMenu && g_labAfterTest.exchange(false))
             {
@@ -1470,22 +1481,20 @@ namespace pdnet::gamepatches
                 {
                     // Only the scoreboard menu adds $LEADERBOARD_ items.
                     if (GetConfig().scoreboard && strncmp(text, "$LEADERBOARD_", 13) == 0 && atoi(text + 13) % 3 != 0) return 0; // Friends / Favorites
-                    if (g_testPickingOpponent && strcmp(text, "Select an arsenal.") == 0) // livearsel, first pick of Test Arsenal
+                    if (g_testPicking == kPickingOpponentArsenal && strcmp(text, "Select an arsenal.") == 0) // livearsel, the AI's pick in Test Arsenal
                     {
                         int64_t renamed[8];
                         memcpy(renamed, args, sizeof(renamed));
-                        renamed[0] = reinterpret_cast<int64_t>("Select the OPPONENT's arsenal.\nThe AI will fight with it; you pick yours next.");
+                        renamed[0] = reinterpret_cast<int64_t>("Choose the arsenal the AI OPPONENT fights with.");
                         return g_addItem(renamed);
                     }
-                    if (g_testPicking != kPickingNone && strcmp(text, "Select a character.") == 0) // livecharasel, twice in Test Arsenal
+                    if ((g_testPicking == kPickingCharacter || g_testPicking == kPickingOpponentCharacter) && strcmp(text, "Select a character.") == 0) // livecharasel, twice in Test Arsenal
                     {
                         int64_t renamed[8];
                         memcpy(renamed, args, sizeof(renamed));
                         bool opponent = g_testPicking == kPickingOpponentCharacter;
                         renamed[0] = reinterpret_cast<int64_t>(opponent ? "Choose the character the AI OPPONENT plays as." : "Choose the character YOU play as.");
-                        // The screen has no heading of its own: menu command 88 line 1, as other menus set "LEVEL LIST".
-                        int64_t heading[8] = { 1, reinterpret_cast<int64_t>(opponent ? "AI OPPONENT'S CHARACTER" : "YOUR CHARACTER"), 0 };
-                        reinterpret_cast<int64_t (*)(int64_t*)>(At(0x140207650))(heading);
+                        SetMenuHeading(opponent ? "AI OPPONENT'S CHARACTER" : "YOUR CHARACTER");
                         return g_addItem(renamed);
                     }
                     char previous[80];
@@ -2521,18 +2530,19 @@ namespace pdnet::gamepatches
                 return;
             }
             *reinterpret_cast<int32_t*>(At(0x1403de844)) = index; // as g4 #575
-            MenuParam(kArsenalPickMenu, 0) = 1;                   // livearsel in scoreboard mode
-            MenuParam(kScoreBattleMenu, 0) = 0;
             g_testBattle = true;
-            g_testPickingOpponent = true;
-            g_testPicking = kPickingNone;
             g_testStage = -1;
             g_testCharacter = -1;
             g_testOpponentCharacter = -1;
-            Log(L"gamepatch: Test Arsenal: choose the opponent's arsenal (menu %d)", kArsenalPickMenu);
+            g_testArsenal = index;
+            LoadMultiplayerTextures();
+            *reinterpret_cast<int32_t*>(At(0x140527bc0)) = -1;
+            MenuVariables()[0] = 1;
+            g_testPicking = kPickingCharacter;
+            Log(L"gamepatch: Test Arsenal: choose your character (menu %d)", kCharacterMenu);
             int64_t manager = MenuManager();
             *At(0x1404bbc34) = 0;
-            g_pushMenu(manager, kArsenalPickMenu, 0);
+            g_pushMenu(manager, kCharacterMenu, 0);
             *reinterpret_cast<char*>(manager + 0x1062c) = 0; // no picked label on the new menu (see OpenCaseMenu)
         }
 

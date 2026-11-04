@@ -970,6 +970,9 @@ namespace pdnet::gamepatches
                 Log(L"gamepatch: Test Arsenal: character %d", picked);
                 ResetLabVariables();
                 g_testPicking = kPickingNone;
+                // livearsel sets no heading of its own (menu command 88, line 1), so it would keep "YOUR CHARACTER".
+                int64_t heading[8] = { 1, reinterpret_cast<int64_t>("YOUR ARSENAL"), 0 };
+                reinterpret_cast<int64_t (*)(int64_t*)>(At(0x140207650))(heading);
                 MenuParam(kScoreBattleMenu, 0) = 0; // livedbtl: open the arsenal choice (the player's own) first
                 return g_pushMenu(manager, kScoreBattleMenu, 0);
             }

@@ -445,6 +445,61 @@ namespace
         return static_cast<pdnet::pads::Shared*>(view);
     }
 
+    // Has the game the keyboard focus? A UWP window's top level is ApplicationFrameHost's, the game's CoreWindow its child;
+    // full screen, the CoreWindow is on top.
+    bool GameHasFocus(DWORD pid)
+    {
+        HWND top = GetForegroundWindow();
+        DWORD owner = 0;
+        if (!top) return false;
+        GetWindowThreadProcessId(top, &owner);
+        if (owner == pid) return true;
+        struct Search { DWORD pid; bool found; } search{ pid, false };
+        EnumChildWindows(top, [](HWND child, LPARAM param) -> BOOL
+        {
+            auto s = reinterpret_cast<Search*>(param);
+            DWORD p = 0;
+            GetWindowThreadProcessId(child, &p);
+            if (p != s->pid) return TRUE;
+            s->found = true;
+            return FALSE;
+        }, reinterpret_cast<LPARAM>(&search));
+        return search.found;
+    }
+
+    // The keyboard for pdnet (padshare.h), every 8 ms until the game exits. Mouse buttons, the Windows keys and the
+    // left / right copies of Shift, Ctrl and Alt are left out (the game's key events use the plain ones).
+    void ReadKeyboard(DWORD pid, std::wstring localState)
+    {
+        pdnet::pads::Shared* shared = localState.empty() ? nullptr : MapPads(localState);
+        HANDLE game = OpenProcess(SYNCHRONIZE, FALSE, pid);
+        if (!shared || !game)
+        {
+            Log(L"keyboard: not read for the game (error %lu)", GetLastError());
+            if (game) CloseHandle(game);
+            return;
+        }
+        bool told = false;
+        while (WaitForSingleObject(game, 8) == WAIT_TIMEOUT)
+        {
+            bool focus = GameHasFocus(pid);
+            for (int key = 0; key < 256; ++key)
+            {
+                bool wanted = key >= 8 && key < 0xFF && key != 0x5B && key != 0x5C && (key < 0xA0 || key > 0xA5);
+                bool down = focus && wanted && (GetAsyncKeyState(key) & 0x8000) != 0;
+                shared->keys[key] = down ? 1 : 0;
+                if (down && !told)
+                {
+                    told = true;
+                    Log(L"keyboard: first key seen (0x%02X)", key);
+                }
+            }
+            shared->keyHeartbeat = GetTickCount();
+        }
+        shared->keyHeartbeat = 0;
+        CloseHandle(game);
+    }
+
     void ReadControllers(DWORD pid, std::wstring localState)
     {
         if (_wcsicmp(Setting(L"more_controllers", L"on").c_str(), L"off") == 0 || localState.empty()) return;
@@ -1072,6 +1127,7 @@ int wmain(int argc, wchar_t** argv)
     CheckClock(localState); // before pdnet starts EOS, which reads the offset
     KeepIdentity(localState, true); // before the game runs: the same player as always
     std::thread controllers(ReadControllers, pid, localState); // until the game exits
+    std::thread keyboard(ReadKeyboard, pid, localState); // until the game exits
     bool injected = Inject(pid);
 
     HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME, FALSE, tid);
@@ -1087,5 +1143,6 @@ int wmain(int argc, wchar_t** argv)
     }
     KeepIdentity(localState, false); // a first sign-in made its credential while the game ran
     controllers.join();
+    keyboard.join();
     return injected ? 0 : 1;
 }

@@ -3567,10 +3567,27 @@ namespace pdnet::gamepatches
         // KeyEventArgs: get_VirtualKey at vtable +0x30, get_KeyStatus at +0x38 (CorePhysicalKeyStatus: WasKeyDown at byte 10).
         using GameKeyFn = int64_t (*)(void* self, void* sender, void** args);
         GameKeyFn g_gameKey = nullptr;
+        // On some PCs (the developer's) the game's window gets characters but no key-down or key-up events at all, so every
+        // keyboard control is dead (no 'handler ran' in 123's log with a key row waiting; why isn't known). pdlaunch reads the
+        // keyboard and KeyboardBridge hands the changes to the game's own handlers (FUN_140008490 down, FUN_140008600 up), as
+        // these stand-in KeyEventArgs. It stops for good once the window delivers a real key event, so nothing comes twice.
+        std::atomic<bool> g_windowKeys{ false };
+        struct FakeKeyArgs
+        {
+            void** vtable;
+            static HRESULT __stdcall Zero(void*) { return S_OK; }
+            static HRESULT __stdcall Key(void*, int32_t* key) { *key = Current(); return S_OK; }
+            static HRESULT __stdcall Status(void*, uint8_t* status) { memset(status, 0, 12); return S_OK; }
+            static int32_t& Current() { static int32_t key = 0; return key; }
+            void** self() { return reinterpret_cast<void**>(this); }
+        };
+        void* g_fakeKeyTable[8] = { reinterpret_cast<void*>(&FakeKeyArgs::Zero), reinterpret_cast<void*>(&FakeKeyArgs::Zero), reinterpret_cast<void*>(&FakeKeyArgs::Zero),
+                                    reinterpret_cast<void*>(&FakeKeyArgs::Zero), reinterpret_cast<void*>(&FakeKeyArgs::Zero), reinterpret_cast<void*>(&FakeKeyArgs::Zero),
+                                    reinterpret_cast<void*>(&FakeKeyArgs::Key), reinterpret_cast<void*>(&FakeKeyArgs::Status) };
+        FakeKeyArgs g_fakeKeyArgs{ g_fakeKeyTable };
         int64_t HookedGameKey(void* self, void* sender, void** args)
         {
-            static std::atomic<int> seen{ 0 };
-            if (seen++ < 25) Log(L"gamepatch: keyboard: the game's key handler ran (assigning row %d)", *reinterpret_cast<int32_t*>(At(0x1403dd3d8)));
+            if (args != g_fakeKeyArgs.self()) g_windowKeys = true;
             int64_t result = g_gameKey(self, sender, args);
             if (!args) return result;
             void** vtable = reinterpret_cast<void**>(*args);
@@ -3580,6 +3597,40 @@ namespace pdnet::gamepatches
             auto readStatus = reinterpret_cast<HRESULT (__stdcall*)(void*, void*)>(vtable[7]);
             if (SUCCEEDED(read(args, &key)) && SUCCEEDED(readStatus(args, status)) && !status[10]) HookedKey(static_cast<uint32_t>(key));
             return result;
+        }
+
+        void KeyboardBridge()
+        {
+            std::thread([]
+            {
+                uint8_t held[256] = {}, now[256];
+                bool told = false;
+                for (;;)
+                {
+                    Sleep(8);
+                    if (g_windowKeys)
+                    {
+                        Log(L"gamepatch: keyboard: the window delivers keys on this PC - pdlaunch's aren't needed");
+                        return;
+                    }
+                    void* app = *reinterpret_cast<void**>(At(0x1405ae170));
+                    if (!app || !g_gameKey) continue;
+                    if (!KeysHeld(now) || g_typingName) memset(now, 0, sizeof(now)); // typing a name: its characters are enough
+                    for (int key = 0; key < 256; ++key)
+                    {
+                        if (now[key] == held[key]) continue;
+                        held[key] = now[key];
+                        FakeKeyArgs::Current() = key;
+                        if (now[key]) HookedGameKey(app, nullptr, g_fakeKeyArgs.self());
+                        else reinterpret_cast<GameKeyFn>(At(0x140008600))(app, nullptr, g_fakeKeyArgs.self());
+                        if (!told)
+                        {
+                            told = true;
+                            Log(L"gamepatch: keyboard: keys from pdlaunch go to the game's handlers (first 0x%02X)", key);
+                        }
+                    }
+                }
+            }).detach();
         }
 
         void PartnerLock()
@@ -3617,6 +3668,7 @@ namespace pdnet::gamepatches
             std::vector<uint8_t> start = { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x56, 0x48, 0x83, 0xEC, 0x40 }; // mov [rsp+8],rbx / push rsi / sub rsp,40h
             g_gameKey = reinterpret_cast<GameKeyFn>(InlineHookBytes(0x140008490, start, start, reinterpret_cast<void*>(&HookedGameKey), L"keyboard key"));
             Log(L"gamepatch: lock onto partner: keyboard key 0x%02X (%s)", key, g_gameKey ? L"hooked" : L"NOT hooked");
+            if (g_gameKey) KeyboardBridge();
             bool row = WrapCommand<NativeFn>(0x1403ddde0 + 18 * 8, 0x1400be7f0, &HookedKeyRow, g_keyRow, L"partner lock key row") &&
                        WrapCommand<NativeFn>(0x1403ddde0 + 20 * 8, 0x1400be990, &HookedKeyDefaults, g_keyDefaults, L"partner lock key default");
             Log(L"gamepatch: Options > Keyboard: Lock Onto Partner row %s", row ? L"ready" : L"NOT added");

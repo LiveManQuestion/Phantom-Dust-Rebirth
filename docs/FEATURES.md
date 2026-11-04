@@ -34,7 +34,7 @@ As of Experimental 98. *(untested)* = waiting for a test in a real match.
 
 ## Arsenal Lab
 - Buy and sell arsenal cases, also from the lobby
-- Test Arsenal: pick both arsenals, fight the AI
+- Test Arsenal: pick both arsenals, the map and your character, fight the AI
 - Max credits and skills in the shop
 
 ## Menus and UI

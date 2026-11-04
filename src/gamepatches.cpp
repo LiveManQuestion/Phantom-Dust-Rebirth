@@ -640,6 +640,16 @@ namespace pdnet::gamepatches
         // where the player picks their own arsenal.
         constexpr int kArsenalPickMenu = 67;
         std::atomic<bool> g_testPickingOpponent{ false };
+        // Then the map and the player's character, on the multiplayer menus: livestagesel (47; g4 #576 stores the pick in
+        // 0x14051775c, the map id in 0x140527bc8 and a random layout in 0x140527c54) and livecharasel (46; g4 #571 stores it
+        // in 0x140527bc0). Both end with a back, picked or not: each is opened with its value at -1, so -1 means cancelled.
+        // livecharasel's back leaves the session unless menu variable 0 is 1, as the lobby sets it before opening it.
+        // The scoreboard battle (g4 #661 = FUN_140214770) has map 2, layout 0 and character 0 built in, so HookedTestStart
+        // passes the picks to its FUN_140128990 (the match setup: player 0's character at +8; online, the same field).
+        constexpr int kCharacterMenu = 46, kStageMenu = 47;
+        enum TestPick { kPickingNone, kPickingStage, kPickingCharacter };
+        std::atomic<int> g_testPicking{ kPickingNone };
+        std::atomic<int> g_testStage{ -1 }, g_testLayout{ 0 }, g_testCharacter{ -1 };
         int16_t& MenuParam(int menu, int slot) { return *reinterpret_cast<int16_t*>(At(0x1403fa3d8 + menu * 0x18 + slot * 2)); }
         bool CopyArsenalToOpponent(int index); // (below)
         using PushMenuFn = int (*)(int64_t manager, int menu, char force);
@@ -882,13 +892,45 @@ namespace pdnet::gamepatches
             {
                 if (MenuParam(kScoreBattleMenu, 0) == 1 && CopyArsenalToOpponent(*reinterpret_cast<int32_t*>(At(0x1403de844))))
                 {
-                    MenuParam(kScoreBattleMenu, 0) = 0; // livedbtl: open the arsenal choice (the player's own) first
+                    *reinterpret_cast<int32_t*>(At(0x14051775c)) = -1;
+                    g_testPicking = kPickingStage;
                     *At(0x1404bbc34) = 0;
-                    return g_pushMenu(manager, kScoreBattleMenu, 0);
+                    return g_pushMenu(manager, kStageMenu, 0);
                 }
                 g_testBattle = false;
                 Log(L"gamepatch: Test Arsenal: no opponent arsenal picked - back to the Lab");
                 return g_popMenu();
+            }
+            if ((current == kStageMenu && g_testPicking == kPickingStage) || (current == kCharacterMenu && g_testPicking == kPickingCharacter))
+            {
+                bool stage = current == kStageMenu;
+                int picked = *reinterpret_cast<int32_t*>(At(stage ? 0x14051775c : 0x140527bc0));
+                *At(0x1404bbc34) = 0;
+                if (picked < 0)
+                {
+                    g_testPicking = kPickingNone;
+                    g_testBattle = false;
+                    g_labAfterTest = true; // on top of the opponent's arsenal choice: the Lab's back goes to the multiplayer menu
+                    ResetLabVariables();
+                    Log(L"gamepatch: Test Arsenal: no %s picked - back to the Lab", stage ? L"map" : L"character");
+                    return g_pushMenu(manager, kLabMenu, 0);
+                }
+                if (stage)
+                {
+                    g_testStage = *reinterpret_cast<int32_t*>(At(0x140527bc8));
+                    g_testLayout = *reinterpret_cast<int32_t*>(At(0x140527c54));
+                    Log(L"gamepatch: Test Arsenal: map %d, layout %d", g_testStage.load(), g_testLayout.load());
+                    *reinterpret_cast<int32_t*>(At(0x140527bc0)) = -1;
+                    MenuVariables()[0] = 1;
+                    g_testPicking = kPickingCharacter;
+                    return g_pushMenu(manager, kCharacterMenu, 0);
+                }
+                g_testCharacter = picked;
+                Log(L"gamepatch: Test Arsenal: character %d", picked);
+                ResetLabVariables();
+                g_testPicking = kPickingNone;
+                MenuParam(kScoreBattleMenu, 0) = 0; // livedbtl: open the arsenal choice (the player's own) first
+                return g_pushMenu(manager, kScoreBattleMenu, 0);
             }
             if (current == kLabMenu && g_labAfterTest.exchange(false))
             {
@@ -2428,6 +2470,9 @@ namespace pdnet::gamepatches
             MenuParam(kScoreBattleMenu, 0) = 0;
             g_testBattle = true;
             g_testPickingOpponent = true;
+            g_testPicking = kPickingNone;
+            g_testStage = -1;
+            g_testCharacter = -1;
             Log(L"gamepatch: Test Arsenal: choose the opponent's arsenal (menu %d)", kArsenalPickMenu);
             int64_t manager = MenuManager();
             *At(0x1404bbc34) = 0;
@@ -3234,6 +3279,35 @@ namespace pdnet::gamepatches
             if (index >= 0) *reinterpret_cast<int32_t*>(target + 0x10) = index;
         }
 
+        // The scoreboard battle's start, for Test Arsenal's map and character (see g_testPicking).
+        using MatchSetupFn = void (*)(uint64_t a, uint32_t localSlot, int mode, uint8_t* setup, uint32_t e, int stage, uint32_t layout);
+        void HookedTestStart(uint64_t a, uint32_t localSlot, int mode, uint8_t* setup, uint32_t e, int stage, uint32_t layout)
+        {
+            if (g_testBattle)
+            {
+                if (g_testStage >= 0) { stage = g_testStage; layout = g_testLayout; }
+                if (g_testCharacter >= 0) *reinterpret_cast<int32_t*>(setup + 8) = g_testCharacter;
+                Log(L"gamepatch: Test Arsenal: battle on map %d, layout %u, character %d", stage, layout, *reinterpret_cast<int32_t*>(setup + 8));
+            }
+            reinterpret_cast<MatchSetupFn>(At(0x140128990))(a, localSlot, mode, setup, e, stage, layout);
+        }
+
+        void TestArsenalChoices()
+        {
+            uint8_t* site = At(0x140214a09);
+            uint8_t* cave = CodeCave(16);
+            if (site[0] != 0xe8 || site + 5 + *reinterpret_cast<int32_t*>(site + 1) != At(0x140128990) || !cave)
+            {
+                Log(L"gamepatch: Test Arsenal map and character skipped - the game code is not what this pdnet expects");
+                return;
+            }
+            std::vector<uint8_t> toHook = { 0xff, 0x25, 0x00, 0x00, 0x00, 0x00 }; // jmp [rip+0]
+            Put64(toHook, reinterpret_cast<uint64_t>(&HookedTestStart));
+            std::vector<uint8_t> call = { 0xe8 };
+            Put32(call, Rel32(site + 5, cave));
+            if (!Write(cave, toHook) || !Write(site, call)) Log(L"gamepatch: Test Arsenal map and character failed (VirtualProtect error %lu)", GetLastError());
+        }
+
         // Presses: RB (GamepadButtons RightShoulder) on any controller, polled; the key from the game's window.
         void PartnerPress(const wchar_t* source)
         {
@@ -3454,6 +3528,7 @@ namespace pdnet::gamepatches
             g_bodyTags = GetConfig().nametagsOnBodies ? 1 : 0;
             NametagsAlwaysOn();
             PartnerLock();
+            TestArsenalChoices();
             SkillDataGuard();
             if (NametagsOnBodies())
             {

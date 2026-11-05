@@ -5,7 +5,7 @@
 #   ./setup-linux.sh                  install Phantom Dust if needed, then set up pdnet (asks for your player name)
 #   ./setup-linux.sh --name NAME      same, without asking
 #   ./setup-linux.sh --iso FILE       use this Windows 11 ISO if wine-uwp isn't set up yet
-#   ./setup-linux.sh --update         update this kit to the newest pdnet build (Windows kits do it at game start)
+#   ./setup-linux.sh --update         update this kit to the newest pdnet build now (the game also does it at start)
 #   ./setup-linux.sh --remove         stop using pdnet (your pdnet saves are kept)
 #   ./setup-linux.sh --logs           copy the logs to your home folder, to send after a test
 #
@@ -13,6 +13,7 @@
 # none can load pdnet, it offers to download the prebuilt one (github.com/LiveManQuestion/wine-uwp releases).
 # The game's files are not changed: wine-uwp loads pdnet.dll into the game when it starts (local.env in the game's
 # folder, WINE_UWP_INJECT), as pdlaunch.exe does on Windows. pdnet and its files are copied next to the game.
+# wine-uwp runs before-start.sh from the game's folder at each start: there it calls this script with --auto-update.
 set -euo pipefail
 
 kit=$(cd "$(dirname "$0")" && pwd)
@@ -24,7 +25,7 @@ say()  { printf '%s\n' "$*"; }
 fail() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 ask()  { local a=""; read -r -p "$1 " a || true; printf "%s" "$a"; }
 
-action=setup name="" iso=""
+action=setup name="" iso="" auto=""
 while [ $# -gt 0 ]; do
     case $1 in
         --name) name=${2:?--name needs a value}; shift ;;
@@ -32,7 +33,8 @@ while [ $# -gt 0 ]; do
         --remove) action=remove ;;
         --logs) action=logs ;;
         --update) action=update ;;
-        -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --auto-update) action=update auto=1 ;;   # at game start: nobody is there to answer
+        -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) fail "unknown option $1 (see --help)" ;;
     esac
     shift
@@ -55,16 +57,19 @@ asset=wine-uwp-phantom-dust-x86_64.tar.xz
 dl_tmp=""
 download_wine_uwp() {
     local dest=$HOME/.local/opt
+    [ -z "$auto" ] || fail "no wine-uwp that can load pdnet was found."
     [ -f "$kit/pdnet.dll" ] && [ -f "$kit/eos.ini" ] ||
         fail "pdnet.dll or eos.ini is missing from $kit. Unzip the whole kit (eos.ini may come separately) and run this again."
     command -v curl >/dev/null || fail "curl is needed to download wine-uwp."
-    if [ -n "$old" ]; then
-        say "Your wine-uwp ($old) is too old to load pdnet. A newer one can be downloaded to $dest/wine-uwp"
-        say "(about 50 MB; your game, prefix and sign-in are kept)."
-    else
-        say "wine-uwp (the Wine build that runs Phantom Dust) was not found. It can be downloaded to $dest/wine-uwp (about 50 MB)."
+    if [ -z "${1:-}" ]; then
+        if [ -n "$old" ]; then
+            say "Your wine-uwp ($old) is too old to load pdnet. A newer one can be downloaded to $dest/wine-uwp"
+            say "(about 50 MB; your game, prefix and sign-in are kept)."
+        else
+            say "wine-uwp (the Wine build that runs Phantom Dust) was not found. It can be downloaded to $dest/wine-uwp (about 50 MB)."
+        fi
+        case $(ask "Download it now? [Y/n]") in [nN]*) fail "set WINE_UWP=/path/to/bin/wine-uwp to use your own build." ;; esac
     fi
-    case $(ask "Download it now? [Y/n]") in [nN]*) fail "set WINE_UWP=/path/to/bin/wine-uwp to use your own build." ;; esac
     dl_tmp=$(mktemp -d)
     trap 'rm -rf "$dl_tmp"' EXIT
     local tmp=$dl_tmp
@@ -85,6 +90,14 @@ download_wine_uwp() {
     say "wine-uwp installed in $dest/wine-uwp."
 }
 [ -n "$wup" ] || [ $action = remove ] || [ $action = logs ] || download_wine_uwp
+# The prebuilt wine-uwp from before updates at game start can load pdnet, so it was kept above: offer the newer one.
+updates_at_start() { grep -q before-start.sh "$(readlink -f "$wup")"; }
+if [ $action = setup ] && [ -n "$wup" ] && [ "$wup" -ef ~/.local/opt/wine-uwp/bin/wine-uwp ] &&
+   ! updates_at_start && ! pgrep -x PDUWP.exe >/dev/null 2>&1; then
+    say "Your wine-uwp can't update pdnet when the game starts. A newer one can be downloaded to ~/.local/opt/wine-uwp"
+    say "(about 50 MB; your game, prefix and sign-in are kept)."
+    case $(ask "Download it now? [Y/n]") in [nN]*) ;; *) download_wine_uwp confirmed ;; esac
+fi
 if [ -z "$wup" ]; then
     [ -n "$old" ] && fail "your wine-uwp ($old) is too old to load pdnet. Run this without --remove/--logs to update it, or set WINE_UWP=/path/to/bin/wine-uwp."
     fail "wine-uwp was not found. Run this without --remove/--logs to download it, or set WINE_UWP=/path/to/bin/wine-uwp."
@@ -126,7 +139,7 @@ fi
 if [ $action = remove ]; then
     [ -n "$game" ] || fail "Phantom Dust is not installed in $data."
     running && fail "close Phantom Dust first."
-    rm -f "$game"/{pdnet.dll,pdnet.ini,eos.ini,EOSSDK-Win64-Shipping.dll,xaudio2_9redist.dll}
+    rm -f "$game"/{pdnet.dll,pdnet.ini,eos.ini,EOSSDK-Win64-Shipping.dll,xaudio2_9redist.dll,before-start.sh}
     if [ -f "$game/local.env" ]; then
         sed -i '/WINE_UWP_INJECT/d; /^# Phantom Dust Rebirth/d' "$game/local.env"
         grep -q '[^[:space:]]' "$game/local.env" || rm -f "$game/local.env"
@@ -139,7 +152,8 @@ fi
 # What pdlaunch.exe does at game start on Windows (launcher/pdlaunch.cpp, CheckForUpdate): the newest
 # pdnet-update-<build>.zip on this kit's channel from the GitHub releases, checked against the "sha256 <zip> <hex>" line
 # in its notes, replaces the kit's files except eos.ini and pdnet.ini (old ones kept in update/backup until it worked).
-# Then the updated kit is set up again, which copies the new pdnet into the game.
+# Then the new files are copied into the game; its pdnet.ini stays, as on Windows. With --auto-update (before-start.sh,
+# at game start) a failure only ends this script, and a game with another pdnet.dll than the kit's is left alone.
 if [ $action = update ]; then
     running && fail "close Phantom Dust first."
     command -v curl >/dev/null || fail "curl is needed to update."
@@ -147,22 +161,40 @@ if [ $action = update ]; then
     [ -f "$kit/kit-version.txt" ] || fail "kit-version.txt is missing from $kit, so this kit's build is unknown."
     kv() { sed -n "$1" "$kit/kit-version.txt" | tr -d '\r' | sed 's/^\xEF\xBB\xBF//' | head -1; }
     label=$(kv 1p); build=$(kv 's/^Build: //p'); want_md5=$(kv 's/^pdnet\.dll MD5 //p' | tr 'A-F' 'a-f')
-    case $label in *Experimental*) channel=experimental ;; *Stable*) channel=stable ;; *) channel=off ;; esac
+    # Conceptual kits are never published: an update would replace the concept with a master build.
+    case $label in *Conceptual*) say "Updates are off for this kit (Conceptual build)."; exit 0 ;; esac
+    case $label in *Experimental*) own_channel=experimental ;; *Stable*) own_channel=stable ;; *) own_channel=off ;; esac
+    channel=""
     # update_channel: the kit's pdnet.ini, the game's copy, then the file in-game Options > Updates writes (later wins)
     for f in "$kit/pdnet.ini" "$game/pdnet.ini" "$data/prefix/drive_c/users/$USER/AppData/Local/Packages/$family/LocalState/pdnet/settings.ini"; do
         c=$(sed -n 's/^\xEF\xBB\xBF//; s/^update_channel=//p' "$f" 2>/dev/null | tr -d '\r' | tail -1 || true)
         if [ -n "$c" ]; then channel=$c; fi
     done
     channel=$(printf '%s' "$channel" | tr 'A-Z' 'a-z')
+    case $channel in
+        stable|experimental|off) ;;
+        "") channel=$own_channel ;;
+        # a typo must not count as stable, which would take an Experimental kit back to a Stable
+        *) say "update_channel=$channel isn't stable, experimental or off; using this kit's own ($own_channel)."; channel=$own_channel ;;
+    esac
     [ "$channel" = off ] && { say "Updates are off for this kit (update_channel=off, or a development build)."; exit 0; }
     have_md5=$(md5sum "$kit/pdnet.dll" | cut -c1-8)
     [ -z "$want_md5" ] || [ "$have_md5" = "$want_md5" ] ||
         fail "this kit's pdnet.dll isn't the one its kit-version.txt names (a build put in by hand), so it isn't updated."
+    if [ -n "$auto" ] && ! cmp -s "$kit/pdnet.dll" "$game/pdnet.dll"; then
+        say "The game's pdnet.dll isn't this kit's (a build put in by hand?), so it isn't updated at game start."
+        exit 0
+    fi
+    # The new files into the game. Not set up yet: the whole setup (same name as before).
+    update_game() {
+        [ -f "$game/pdnet.dll" ] || exec bash "$kit/setup-linux.sh" ${keep_name:+--name "$keep_name"}
+        cp -f "$kit/pdnet.dll" "$kit/EOSSDK-Win64-Shipping.dll" "$game/"
+    }
 
     repo=$(sed -n 's/^\xEF\xBB\xBF//; s/^update_repo=//p' "$kit/pdnet.ini" 2>/dev/null | tr -d '\r' | tail -1 || true)
     repo=${repo:-SnowRyze/Phantom-Dust-Rebirth}
     say "This kit: ${label:-unknown} (build ${build:-?}), $channel channel. Checking github.com/$repo..."
-    json=$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$repo/releases?per_page=30") ||
+    json=$(curl -fsSL --connect-timeout 4 --max-time 10 -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$repo/releases?per_page=30") ||
         fail "GitHub could not be reached."
     pick=$(printf '%s' "$json" | python3 -I -c '
 import json, re, sys
@@ -190,8 +222,8 @@ print("update", best[0], best[1], m.group(1).lower() if m else "-", "revert" if 
         current)
             say "Up to date (build ${build:-?})."
             if [ -n "$game" ] && [ -f "$game/pdnet.dll" ] && ! cmp -s "$kit/pdnet.dll" "$game/pdnet.dll"; then
-                say "The game has a different pdnet.dll than this kit; setting the kit up again."
-                exec bash "$kit/setup-linux.sh" ${keep_name:+--name "$keep_name"}
+                say "The game has a different pdnet.dll than this kit; copying the kit's."
+                update_game
             fi
             exit 0 ;;
     esac
@@ -201,7 +233,9 @@ print("update", best[0], best[1], m.group(1).lower() if m else "-", "revert" if 
     say "Downloading build $new_build..."
     dl_tmp=$(mktemp -d)
     trap 'rm -rf "$dl_tmp"' EXIT
-    curl -fL --progress-bar -o "$dl_tmp/update.zip" "$url" || fail "download failed ($url)."
+    # a stalled download gives up, so it can't hold the game back for long
+    curl -fL ${auto:+-sS} --connect-timeout 10 --speed-limit 10000 --speed-time 30 -o "$dl_tmp/update.zip" "$url" ||
+        fail "download failed ($url)."
     [ "$(sha256sum "$dl_tmp/update.zip" | cut -d' ' -f1)" = "$sum" ] || fail "the download is damaged (sha256 mismatch); nothing was changed."
     python3 -I -m zipfile -e "$dl_tmp/update.zip" "$dl_tmp/new" && [ -f "$dl_tmp/new/pdnet/pdnet.dll" ] ||
         fail "could not unpack build $new_build; nothing was changed."
@@ -229,8 +263,9 @@ print("update", best[0], best[1], m.group(1).lower() if m else "-", "revert" if 
         say "Phantom Dust isn't installed yet: run bash $kit/setup-linux.sh to install it and set up pdnet."
         exit 0
     fi
-    # the new kit's own setup copies the new files into the game (same name as before)
-    exec bash "$kit/setup-linux.sh" ${keep_name:+--name "$keep_name"}
+    update_game
+    say "pdnet build $new_build is in the game."
+    exit 0
 fi
 
 # --- check the kit --------------------------------------------------------------------------------------------------
@@ -311,9 +346,21 @@ touch "$game/local.env"
 sed -i '/WINE_UWP_INJECT/d; /^# Phantom Dust Rebirth/d' "$game/local.env"
 printf '# Phantom Dust Rebirth: pdnet loaded the way pdlaunch.exe does on Windows (setup-linux.sh)\n%s\n' "$inject" >> "$game/local.env"
 
+# --- look for updates at each game start (wine-uwp runs this, as Windows runs pdlaunch.exe) --------------------------
+{
+    printf '# Phantom Dust Rebirth: update pdnet before the game starts (written by setup-linux.sh)\n'
+    printf 'export WINE_UWP=%q\n' "$wup"
+    printf 'exec bash %q --auto-update\n' "$kit/setup-linux.sh"
+} > "$game/before-start.sh"
+
 say ""
 say "Set up as '$name'. Start Phantom Dust with:"
 say "  $wup run $(basename "$game")"
 say "The first title screen should say \"Rebirth\". Your Xbox profile doesn't show while pdnet is on: make a new one."
 say "After a test: $0 --logs     To stop using pdnet: $0 --remove"
-say "Updates: run $0 --update now and then (Windows kits update themselves at game start; Linux ones don't)."
+if updates_at_start; then
+    say "Updates: pdnet updates itself when the game starts (in-game Options > Updates; log: $data/logs/$(basename "$game")-before-start.log)."
+    say "Keep this kit folder where it is: the updates go through it."
+else
+    say "Updates: this wine-uwp is too old to update pdnet at game start, so run $0 --update now and then."
+fi

@@ -69,9 +69,11 @@ Debian 13, Fedora 39, Mint 22, Arch or newer), and GStreamer for the game's vide
    Then type your player name.
 2. Start the game with the command it prints (~/.local/opt/wine-uwp/bin/wine-uwp run msesper).
 3. After a test: bash setup-linux.sh --logs, and send the files it copies to your home folder.
-Updates: Windows kits update themselves when the game starts; on Linux run  bash setup-linux.sh --update
-  now and then (game closed). It gets the newest build on your channel from GitHub, keeps your eos.ini and
-  pdnet.ini, and puts the new pdnet into the game.
+Updates: as on Windows, the kit updates itself when the game starts, so keep the kit folder where it is. A wine-uwp
+from before that (setup-linux.sh says so) needs  bash setup-linux.sh --update  now and then.
+Either way it gets the newest build on your channel from GitHub and keeps your eos.ini and pdnet.ini. Options >
+Updates in the game turns it off. If it can't update, the game starts as it is
+(log: ~/.local/share/wine-uwp/logs/msesper-before-start.log).
 To stop using pdnet: bash setup-linux.sh --remove. Setting up a newer kit: run its setup-linux.sh.
 (On Linux the game reads pdnet.ini from its own folder, ~/.local/share/wine-uwp/stage/msesper.)
 

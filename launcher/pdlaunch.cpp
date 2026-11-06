@@ -927,11 +927,22 @@ namespace
         }
 
         std::wstring repo = Setting(L"update_repo", L"SnowRyze/Phantom-Dust-Rebirth");
+        // Newest first, 100 to a page. The experimental channel's newest is on the first page; a Stable can be far down
+        // (Experimentals and Conceptual kits pile up on top of it: with 30 a page, stable-10 had dropped off the list and
+        // Stable kits saw no Stable at all), so that channel reads on until it has seen one, 5 pages at most.
         std::string json;
-        if (!HttpsGet(L"api.github.com", L"/repos/" + repo + L"/releases?per_page=30", json, 4000))
+        for (int page = 1; page <= 5; ++page)
         {
-            Log(L"update: GitHub not reached - not checked");
-            return;
+            std::string more;
+            if (!HttpsGet(L"api.github.com", L"/repos/" + repo + L"/releases?per_page=100&page=" + std::to_wstring(page), more, 4000))
+            {
+                if (page > 1) break; // what was read so far still counts
+                Log(L"update: GitHub not reached - not checked");
+                return;
+            }
+            json += more;
+            if (experimental || more.find("\"prerelease\":false") != std::string::npos || more.find("\"prerelease\": false") != std::string::npos ||
+                more.find("\"tag_name\"") == std::string::npos) break;
         }
         // Releases come newest first; in each, "prerelease" comes before its assets. The highest build on the channel wins.
         int best = 0;

@@ -534,7 +534,7 @@ fix (78, not seen again), Updates: Off (98).
 2. ~~Match freeze fix~~ (confirmed 2026-11-02).
 3. ~~Discord close fix~~ (confirmed 2026-11-02).
 4. ~~Nametags always on~~ (confirmed 2026-11-03).
-5. **Edit-Settings.bat / hand-typed colours** (Experimental 74): a hex colour typed into settings.ini shows in the game.
+5. ~~Edit-Settings.bat / hand-typed colours~~ (confirmed 2026-11-06).
 6. ~~Going back to Stable~~ (confirmed 2026-11-02).
 7. ~~Start-up crash fix~~ (confirmed 2026-11-02).
 8. ~~Test Arsenal, View Stock List after a battle~~ (confirmed 2026-11-03, Experimental 108). Not checked: Edit Arsenal from that Lab, and the lobby's Lab after a match (same fix).

@@ -3802,6 +3802,36 @@ namespace pdnet::gamepatches
         }
     }
 
+    namespace
+    {
+        // Main menu > HOW TO PLAY: the main menu script (mainmenu_en.ssb) shows it only when the title options have a
+        // "how_to_play_url" (g10 #1, FUN_1400bd6a0: mode 0 checks, mode 1 opens it through Windows.System.Launcher).
+        // Those options came from Xbox Live title storage (tms_options.csv, now the copy in the save), and Microsoft's
+        // copy has only help_url, so the item was hidden. FUN_1400c2d80(key, default) looks a key up: it answers this
+        // one with the community site.
+        constexpr char kHowToPlayUrl[] = "https://phantomdust.online";
+        using OptionFn = uint64_t (*)(const char* key, uint64_t fallback);
+        OptionFn g_option = nullptr;
+
+        uint64_t HookedOption(const char* key, uint64_t fallback)
+        {
+            if (key && _stricmp(key, "how_to_play_url") == 0)
+            {
+                static bool told = false;
+                if (!told) { told = true; Log(L"gamepatch: main menu How to Play -> %S", kHowToPlayUrl); }
+                return reinterpret_cast<uint64_t>(kHowToPlayUrl);
+            }
+            return g_option(key, fallback);
+        }
+
+        void HowToPlay()
+        {
+            // mov [rsp+8],rbx; mov [rsp+10h],rsi; push rdi; sub rsp,20h
+            const std::vector<uint8_t> start = { 0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10, 0x57, 0x48, 0x83, 0xec, 0x20 };
+            g_option = reinterpret_cast<OptionFn>(InlineHookBytes(0x1400c2d80, start, start, reinterpret_cast<void*>(&HookedOption), L"How to Play link"));
+        }
+    }
+
     void InstallEarlyHooks() { InstallBackButton(); }
 
     bool HookFileOpens()
@@ -3825,6 +3855,7 @@ namespace pdnet::gamepatches
             PartnerLock();
             TestArsenalChoices();
             SkillDataGuard();
+            HowToPlay();
             if (NametagsOnBodies())
             {
                 DeadNametagColor(GetConfig().deadNametagColor);

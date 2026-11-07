@@ -41,6 +41,7 @@ As of Experimental 98. *(untested)* = waiting for a test in a real match.
 - "Rebirth" title artwork
 - Build version on the main menu
 - Community (Discord) button replaces Help & Support
+- How to Play button back (opens phantomdust.online)
 - "Xbox Live" reads "Online"
 - Options: Send Log, Updates, Aura Particle Beeps
 - Multiplayer: Settings menu, Online Store removed, Trade reads "Theater"

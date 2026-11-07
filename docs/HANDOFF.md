@@ -397,6 +397,30 @@ Earlier note (written while paused): the user chose to build from Stable 11's co
 - Plan when resumed: commit, build.bat experimental (133), test the public channel with pdlaunch -update on a temporary kit, then build.bat public 133 and push the tag.
 Stable 11 (2026-11-07): Experimental 132 promoted at the user's request (build.bat promote 132). Tag stable-11 = master 6a35d38, pushed; release stable-11 published. Since Stable 10: Stable kits see Stable releases again (pdlaunch reads all release pages; kits still on Stable 10's launcher pick it up only now that a newer Stable exists near the top), pdnet stays set up after a restart, Setup installs Store-signed unpacked copies, How to Play is back, dynamic arsenal cases (PR #5), keyboard fixes and partner lock (Modern / Classic), Test Arsenal picks, the lobby Arsenal Lab fix.
 Lobby Arsenal Lab: no "Player 2 copied arsenal" warning (2026-11-07, Experimental 132, confirmed by the user in Stable 11; 131 was the dynamic-cases build from pull request #5). Reported in Experimental 130: the lobby's Arsenal Lab button could show the split-screen warning "Player 2, edits made to the copied arsenal data will only be in effect for the current game session". The Laboratory reads menu variable 2 as it starts (script cmd 14) and hands it to g5 #112, which keeps bit 16 at [0x1404bec08]+0xb58 (the same flag g5 #119 returns: see the paused skill preview note). The multiplayer menu zeroes variables 0-2 before the Lab, but OpenLobbyArsenalEditor fixed only variable 0. A value left by the lobby's screens (likely the arsenal picker, menu 67, opened just before in the log) set it. Now OpenLobbyArsenalEditor saves variable 2 and sets it to 0, and both back-to-the-lobby paths (HookedPushMenu, HookedPopMenu) restore it (RestoreLobbyVariable2). Not confirmed live: the variable's value was never read.
+Skill preview online (2026-11-07, Experimental 135, confirmed by the user: "works well enough"). The Arsenal editor (menu 64) and View Stock List (63) show the skill preview from the multiplayer menu's Lab and the lobby's Arsenal Lab. How (gamepatches.cpp, after HowToPlay; the notes below are how it was found):
+- g5 #119 (HookedLabPreviewMode) is 1 in menus 63 and 64.
+- Menu cmd 70 / 102 with no player starts the story's town session under the menu: StartPreviewTown, FUN_140212720 (g4 #461: stage 9).
+  - Zone 0 / area 2 (0x14059a9dc and the zone table byte at 0x140599140) are used for the whole session and put back once it has closed. Read live in the story's Lab; other pairs crashed, or had no preview room (the save's zone 13 = area 8: black).
+  - The start is held until game state 6. pdnet takes the state-2 hand-over itself (FUN_14012a110), because the menu stays open.
+  - A Town.alr slot number of 3 or more at [0x1404bec20]+0x48 is set to 2: in the lobby its own textures took the low slots, and it hung.
+  - Then g5 #140 (1,1,1) shows the town's scene layers, as in the story's Lab (the stage load hides them), and the held 102 / 104 run. The town's own frame steps the preview.
+- While the session runs:
+  - the HUD objects keep their hidden flag 0x40000 (0x1404bbd50, 0x1404bcc50);
+  - the area-banner bits 0x18000 at 0x140530034 stay off; the `or edx, 0x18000` at 0x1401af6dd ORs 0 during the session;
+  - the music is kept on the Lab's track.
+- Leaving the two screens ends the session (EndPreviewTown: g5 #140 (1,1,1) and the g4 #458 mode-0 path, FUN_14012b4f0). After it has closed (game state 13), the zone and area go back, and the menu audio profile DSP_Menu (FUN_14021a6a0 with stage 0, then FUN_14021ad70) is loaded.
+  - A preview asked for while it ends starts a new session after.
+  - In the lobby the red hand stays on until the session has closed (LobbyAvailableAfterPreview).
+- Left as is:
+  - a short flash of the town's radar and a blue streak before the screen appears;
+  - the town's hum stops about 1.3 s after leaving (the end's own timers).
+- Tried and crashed:
+  - clearing bit 1 at +0x40 of the HUD object;
+  - cutting the end timers (0x1404bc8c0) to a frame;
+  - loading DSP_Menu while the session still runs (FUN_14021a6a0 frees the profile in use).
+- Testing settings: preview_area=N (area N with zone 0; -1 the save's own) and debug_menu=on. debug_menu is for developer copies: Split Screen opens the game's debug menu (menu 2), menu1_en.ssb is read from MenuD\menu1_en.ssb (English) or debug.ssb, and option_en.ssb from option_enx.ssb when present (the master dump has those files).
+- Diagnostics logged: 'preview: ...' state changes, and the stage, menu state and fade when a preview runs.
+
 Skill preview in the multiplayer Lab (2026-11-07, PAUSED by the user, in git stash 'paused: skill preview in the multiplayer Lab'). Goal: the small 3D view that shows what a skill does (Arsenal editor, View Stock List) online too. Findings:
 - (1) arsenaledit / labostock run every preview step only when g5 #119 is 1. That is bit 16 of the Lab's open parameter (g5 #112 stores it at [0x1404bec08]+0xb58): set in the story Lab, not in the multiplayer one. The laboratory script uses the same check for View Tutorial Movie. The stash patches `call g5 #119; push ret` to `push 1` at load (HookedPrepareScript), only in scripts with menu command 70 (0x20860101).
 - (2) That alone crashed on Edit Arsenal: preview start (menu cmd 70 / 102, FUN_140274e10 -> FUN_14018af80(1)) uses heap DAT_14052b2d8. It is set only by the scene-on step FUN_1401b3960 -> FUN_1401b98c0 when stage 0x1403e0304 % 10 == 9 (the story town), and multiplayer menus have stage 1 and no scene (crash 0x14018996e). Scene off is FUN_1401b3a20 (FUN_1401b9b70, same stage test). The pools are carved from the permanent heaps DAT_14052ded8 / dee8 (FUN_1401ba960).

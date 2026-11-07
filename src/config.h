@@ -35,6 +35,8 @@ namespace pdnet
         int voiceTalkIcon = 36;             // voice_talk_icon=N: MNET sprite N after the name of each player whose mic is on (36 = the original game's megaphone); -1 = voice_talk_mark text after a talking player's name instead
         int voiceTalkIconX = 6;             // voice_talk_icon_x=: gap in pixels between the end of the name and the megaphone
         bool iconGallery = false;         // icon_gallery=on: the main menu's hint line shows the game's 37 inline icons (debug, see gamepatches.cpp)
+        int previewArea = 0;              // preview_area=1-8: the town area (st09_0N) loaded under the online skill preview (testing; 0: the game's default, 7)
+        bool debugMenu = false;           // debug_menu=on (developer copies): Split Screen opens the game's debug menu (menu 2), see gamepatches.cpp
         bool nametagsOnBodies = true;    // nametags_on_bodies=on: keep nametags over dead players (game code patch, see gamepatches.h)
         uint32_t deadNametagColor = 0xFFFFE600; // dead_nametag_color=RRGGBB: colour of a dead player's nametag (default yellow; Tag Team only)
         uint32_t allyNametagColor = 0xFF4FB4FF; // ally_nametag_color=RRGGBB: a teammate's nametag in Tag Team (default blue)

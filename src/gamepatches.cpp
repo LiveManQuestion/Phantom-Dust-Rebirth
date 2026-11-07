@@ -2409,31 +2409,33 @@ namespace pdnet::gamepatches
         bool g_logItemReady = false; // menu command 6 is wrapped (SoundOptions)
 
         // Options > Updates: an eighth item, after Send Log, picked the same way (event 107, "aMAIN_S7"). Each pick goes
-        // stable -> experimental -> off -> stable in update_channel (settings.ini), which pdlaunch reads at the next game
-        // start (CheckForUpdate; settings.ini overrides pdnet.ini; off: no check at all). Empty means the kit's own kind
-        // (off for a development build).
+        // public -> stable -> experimental -> off -> public in update_channel (settings.ini), which pdlaunch reads at the
+        // next game start (CheckForUpdate; settings.ini overrides pdnet.ini; off: no check at all). Empty means the kit's
+        // own kind (off for a development build).
         char g_updateRowText[64];
-        const char* kUpdateHint = "Builds to update to at game start. Stable: tested. Experimental: newest, less tested.\nOff: no automatic updates.";
+        const char* kUpdateHint = "Builds to update to at game start. Public: releases. Stable: tested. Experimental: newest.\nOff: no automatic updates.";
 
         std::wstring UpdateChannel()
         {
             std::wstring channel = GetConfig().updateChannel;
-            if (_wcsicmp(channel.c_str(), L"stable") == 0 || _wcsicmp(channel.c_str(), L"experimental") == 0 || _wcsicmp(channel.c_str(), L"off") == 0) return channel;
+            for (const wchar_t* known : { L"public", L"stable", L"experimental", L"off" })
+                if (_wcsicmp(channel.c_str(), known) == 0) return known;
             std::string label = BuildLabel(); // empty or a typo in settings.ini: the kit's own, as pdlaunch does
             if (label.find("Linux") != std::string::npos) return L"off"; // no pdlaunch there, so no updates
-            return label.find("Experimental") != std::string::npos ? L"experimental" : label.find("Stable") != std::string::npos ? L"stable" : L"off";
+            return label.find("Experimental") != std::string::npos ? L"experimental" : label.find("Stable") != std::string::npos ? L"stable"
+                 : label.find("Public") != std::string::npos ? L"public" : L"off";
         }
 
         void RefreshUpdateRow()
         {
             std::wstring channel = UpdateChannel();
-            sprintf_s(g_updateRowText, "Updates: %s", _wcsicmp(channel.c_str(), L"experimental") == 0 ? "Experimental" : _wcsicmp(channel.c_str(), L"off") == 0 ? "Off" : "Stable");
+            sprintf_s(g_updateRowText, "Updates: %s", channel == L"experimental" ? "Experimental" : channel == L"off" ? "Off" : channel == L"public" ? "Public" : "Stable");
         }
 
         void SwitchUpdates()
         {
             std::wstring now = UpdateChannel();
-            std::wstring next = _wcsicmp(now.c_str(), L"stable") == 0 ? L"experimental" : _wcsicmp(now.c_str(), L"experimental") == 0 ? L"off" : L"stable";
+            std::wstring next = now == L"public" ? L"stable" : now == L"stable" ? L"experimental" : now == L"experimental" ? L"off" : L"public";
             EditableConfig().updateChannel = next;
             SaveSetting("update_channel", winrt::to_string(next));
             RefreshUpdateRow();

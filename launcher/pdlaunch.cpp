@@ -922,10 +922,11 @@ namespace
         if (channel.empty()) channel = fallback;
         if (channel == L"off") { Log(L"update: off (%s)", fallback == L"off" ? L"development build" : L"update_channel=off"); return; }
         bool experimental = channel == L"experimental";
-        // The stable and public channels take only their own releases (tag stable-<M> / public-<P>, which is in each
-        // asset's download link): both are full releases, and a Public must not reach Stable kits or the other way round.
-        std::string tagPrefix = channel == L"public" ? "/download/public-" : "/download/stable-";
-        const char* kindName = channel == L"public" ? "Public" : "Stable";
+        // Each channel takes only its own releases (tag build-<N> / stable-<M> / public-<P>, which is in each asset's
+        // download link): a Public must not reach Stable kits, and a kit switched to another channel gets that kind's
+        // label from its own release (a Stable's asset has the same name as its Experimental's).
+        std::string tagPrefix = channel == L"public" ? "/download/public-" : experimental ? "/download/build-" : "/download/stable-";
+        const char* kindName = channel == L"public" ? "Public" : experimental ? "Experimental" : "Stable";
         // A Public's asset is "pdnet-public-<build>.zip": launchers from before the public channel take any full release's
         // "pdnet-update-<build>.zip" as a Stable, and would have moved Stable kits to a Public.
         std::string assetMarker = channel == L"public" ? "/pdnet-public-" : "/pdnet-update-";
@@ -974,13 +975,14 @@ namespace
             std::string url = json.substr(q1 + 1, q2 - q1 - 1);
             at = q2;
             size_t name = url.rfind(assetMarker);
-            if (name == std::string::npos || (!experimental && (pre || url.find(tagPrefix) == std::string::npos))) continue;
+            if (name == std::string::npos || url.find(tagPrefix) == std::string::npos || (pre && !experimental)) continue;
             int build = atoi(url.c_str() + name + assetMarker.size());
             if (build > best) { best = build; bestUrl = url; bestAt = q2; }
         }
-        // On the stable (public) channel a kit that isn't a Stable (Public), e.g. an Experimental after Options > Updates
-        // was switched, goes to the newest Stable (Public), even though its build number is lower.
-        bool revert = !experimental && kit.label.find(kindName) == std::string::npos;
+        // A kit of another kind than its channel (Options > Updates was switched) goes to that channel's newest build, even
+        // when its build number is lower or the same: then it is that kind, with its label (the user, 2026-11-07, after
+        // Public 1 switched to experimental stayed "Public 1": Experimental 133 is the same build).
+        bool revert = kit.label.find(kindName) == std::string::npos;
         if (revert && best == 0)
         {
             Log(L"update: %s channel, but no %S build is published yet - keeping build %d", channel.c_str(), kindName, kit.build);

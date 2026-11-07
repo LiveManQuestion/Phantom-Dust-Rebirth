@@ -49,6 +49,7 @@ Steps
 4. Start Phantom Dust the normal way (Start menu). Host or join a lobby.
 5. After a test, double-click pdnet\Collect-Log.bat and send the files it puts on your Desktop.
 
+pdnet stays set up after a PC restart: a Windows sign-in entry ("PhantomDust pdnet") sets it again.
 To stop using pdnet, double-click pdnet\Remove.bat.
 To go fully back to Xbox Live and Teredo (also undoes older kits that replaced game files), double-click
 pdnet\Restore-XboxLive.bat. It asks for administrator permission once.

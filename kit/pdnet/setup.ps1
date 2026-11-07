@@ -133,6 +133,8 @@ public static class PdPlm
 '@
 $hr = [PdPlm]::Enable($pkg.PackageFullName, "`"$kit\pdlaunch.exe`"")
 if ($hr -ne 0) { Fail ('Windows refused to attach pdlaunch to Phantom Dust (HRESULT 0x{0:X8}).' -f $hr) }
+# That setting doesn't survive a restart: this sign-in entry sets it again (pdlaunch.exe -attach; Remove.bat deletes it).
+Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'PhantomDust pdnet' -Value "`"$kit\pdlaunch.exe`" -attach" -Type String
 
 # pdnet passes match traffic between the game and itself through sockets on this PC, which Windows blocks for
 # Store-style apps unless they are exempted. This needs administrator rights once.

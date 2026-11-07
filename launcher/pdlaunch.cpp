@@ -14,6 +14,7 @@
 #include <appmodel.h>
 #include <winhttp.h>
 #include <wincred.h>
+#include <shobjidl.h>
 #include <algorithm>
 #include <cstdio>
 #include <set>
@@ -1086,6 +1087,54 @@ namespace
     }
 }
 
+// Windows starts pdlaunch with the game because Setup attached it (IPackageDebugSettings::EnableDebugging), and that
+// doesn't survive a restart: the game then starts without pdnet, until Setup is run again. So a per-user sign-in entry
+// runs "pdlaunch.exe -attach", which sets it again (no administrator rights needed). KeepAttached adds the entry at each
+// game start, so kits set up before it existed get it too; Remove.bat and Restore-XboxLive.bat delete it.
+constexpr wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+constexpr wchar_t kRunName[] = L"PhantomDust pdnet";
+
+void KeepAttached()
+{
+    std::wstring command = L"\"" + g_dir + L"pdlaunch.exe\" -attach";
+    wchar_t current[MAX_PATH * 2] = {};
+    DWORD size = sizeof(current);
+    if (RegGetValueW(HKEY_CURRENT_USER, kRunKey, kRunName, RRF_RT_REG_SZ, nullptr, current, &size) == ERROR_SUCCESS && command == current) return;
+    LSTATUS status = RegSetKeyValueW(HKEY_CURRENT_USER, kRunKey, kRunName, REG_SZ, command.c_str(), static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
+    Log(L"attach: sign-in entry %s (%ld)", status == ERROR_SUCCESS ? L"set" : L"not set", status);
+}
+
+int Attach()
+{
+    constexpr wchar_t kFamily[] = L"Microsoft.MSEsper_8wekyb3d8bbwe";
+    UINT32 count = 0, length = 0;
+    LONG status = GetPackagesByPackageFamily(kFamily, &count, nullptr, &length, nullptr);
+    if (status != ERROR_INSUFFICIENT_BUFFER || !count)
+    {
+        Log(L"attach: Phantom Dust isn't installed (%ld)", status);
+        return 1;
+    }
+    std::vector<PWSTR> names(count);
+    std::vector<wchar_t> buffer(length);
+    if (GetPackagesByPackageFamily(kFamily, &count, names.data(), &length, buffer.data()) != ERROR_SUCCESS) return 1;
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    IPackageDebugSettings* settings = nullptr;
+    HRESULT result = CoCreateInstance(CLSID_PackageDebugSettings, nullptr, CLSCTX_ALL, IID_PPV_ARGS(&settings));
+    std::wstring command = L"\"" + g_dir + L"pdlaunch.exe\"";
+    if (settings)
+    {
+        for (UINT32 i = 0; i < count; ++i)
+        {
+            result = settings->EnableDebugging(names[i], command.c_str(), nullptr);
+            Log(L"attach: %s -> 0x%08X", names[i], static_cast<unsigned>(result));
+        }
+        settings->Release();
+    }
+    else Log(L"attach: no package debug settings (0x%08X)", static_cast<unsigned>(result));
+    CoUninitialize();
+    return SUCCEEDED(result) ? 0 : 1;
+}
+
 int wmain(int argc, wchar_t** argv)
 {
     wchar_t exe[MAX_PATH];
@@ -1099,6 +1148,8 @@ int wmain(int argc, wchar_t** argv)
         CheckForUpdate();
         return 0;
     }
+
+    if (argc == 2 && _wcsicmp(argv[1], L"-attach") == 0) return Attach();
 
     DWORD pid = 0, tid = 0;
     for (int i = 1; i + 1 < argc; ++i)
@@ -1137,6 +1188,7 @@ int wmain(int argc, wchar_t** argv)
     }
 
     Log(L"game started (pid %lu, main thread %lu)", pid, tid);
+    KeepAttached();
     HANDLE game = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
     std::wstring localState = game ? GameLocalState(game) : std::wstring();
     if (!localState.empty()) DeleteFileW(PastTitleFile(localState).c_str()); // from the last start: pdnet writes it again

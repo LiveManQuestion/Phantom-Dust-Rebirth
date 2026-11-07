@@ -1372,7 +1372,7 @@ namespace pdnet::gamepatches
 
         // Rated / Unrated lobbies (rated_lobbies=on). The create-session menu's Rating option (No Restrictions /
         // With Restrictions: session number ratinglimit 0 / 1, originally "only players within 200 of the host")
-        // becomes Unrated / Rated; the lobby search's Rating option then finds one kind or the other, and the ±200
+        // becomes Unrated / Rated; the lobby search's Rating option then finds one kind or the other, and the Â±200
         // limit is gone (xsapi/stubs/Multiplayer.MultiplayerService.cpp). A match changes ratings only when Rated:
         // FUN_1401835c0 (rating += change, at match start and end) is hooked and gets a change of 0 otherwise. The
         // game rated only the three "Official Battle" rules (rule < 3, checks at 0x1401878c6 and 0x1401882c1); those
@@ -1555,6 +1555,16 @@ namespace pdnet::gamepatches
                             if (fresh && (texts > 0 || official > 0)) Log(L"gamepatch: menu %d: %d Rated text(s), %d Official Battle line(s) removed", m, texts, official);
                         }
                         SettingsScriptPatch(m, script, fresh);
+                        if (m == kCaseBuyMenu && MultiplayerProfile())
+                        {
+                            // The list row is drawn with the school number as its first value: CaseRowText changes it as drawn.
+                            static constexpr Relabel kCaseTexts[] = {
+                                { "Do you want to proceed with the\npurchase of an Arsenal Case with\na %d-School Restriction?",
+                                  "Do you want to proceed with the\npurchase of an Arsenal Case?" },
+                                { "Purchased: Arsenal Case with\n%d-School Restriction", "Purchased: Arsenal Case" },
+                            };
+                            RelabelScript(script, kCaseTexts, std::size(kCaseTexts));
+                        }
                         if (int renamed = RenameXboxLive(script); fresh && renamed > 0) Log(L"gamepatch: menu %d: %d Xbox Live text(s) now say Online", m, renamed);
                         if (scoreboard && m == kRankingMenu)
                         {
@@ -1690,14 +1700,13 @@ namespace pdnet::gamepatches
             auto& credits = *reinterpret_cast<int32_t*>(At(0x14059a9d8));
             int before = credits;
             if (credits < kCreditTarget) reinterpret_cast<GiveCreditsFn>(At(0x14015bf90))(mode, kCreditTarget - credits);
+            // One case each press (the user's choice), up to the game's 16. In the multiplayer profile its number then follows
+            // what's put in it (dynamic cases).
             int cases = *reinterpret_cast<int32_t*>(save + 0x3a48);
-            uint8_t* list = *reinterpret_cast<uint8_t**>(save + 0x10a * 0x38);
-            bool hasCase = false;
-            for (int i = 0; list && i < cases && i < 16; ++i) hasCase |= *reinterpret_cast<int16_t*>(list + i * 100 + 0x50) == kCaseSchools;
-            bool gaveCase = !hasCase && cases < 16;
+            bool gaveCase = cases < 16;
             if (gaveCase) reinterpret_cast<GiveCaseFn>(At(0x14015c0e0))(mode, kCaseSchools);
-            Log(L"gamepatch: shop Max Credits & Skills (%s profile): %d skill(s) topped up to %d, credits %d -> %d, 2-School Arsenal Case %s",
-                mode == 2 ? L"multiplayer" : L"story", skills, kSkillTarget, before, credits, gaveCase ? L"given" : hasCase ? L"already owned" : L"not given (16 cases)");
+            Log(L"gamepatch: shop Max Credits & Skills (%s profile): %d skill(s) topped up to %d, credits %d -> %d, Arsenal Case %s",
+                mode == 2 ? L"multiplayer" : L"story", skills, kSkillTarget, before, credits, gaveCase ? L"given" : L"not given (16 cases)");
         }
         int64_t HookedStoreStart(int64_t* args)
         {
@@ -1724,7 +1733,7 @@ namespace pdnet::gamepatches
                     strcmp(pool + 1643, "$STORE_TITLE") != 0 || strcmp(pool + 1725, "$STORE_WAIT") != 0)
                     return 0;
                 const char label[] = "Max Credits & Skills";
-                const char hint[] = "Up to 5,000,000 credits, 80 of each skill, one 2-School Arsenal Case.";
+                const char hint[] = "Up to 5,000,000 credits, 80 of each skill, and an Arsenal Case.";
                 static_assert(sizeof(label) + sizeof(hint) <= 1737 - 1643, "store texts too short");
                 memcpy(pool + 1643, label, sizeof(label));
                 memcpy(pool + 1643 + sizeof(label), hint, sizeof(hint));
@@ -2496,6 +2505,236 @@ namespace pdnet::gamepatches
             return result;
         }
 
+        // Dynamic arsenal cases. An arsenal's school number, case +0x50, does two things:
+        // - the editor refuses more schools than it (session command at 0x140216cc0: schools used > editing arsenal's +0x50);
+        // - at a match start it picks the Aura refill rate from gsdata +0x33034: 1 school 1.3, 2 schools 1.0, 3 schools 0.7
+        //   (FUN_140187710, FUN_14012a750, used in FUN_14024de20). Other players' games use the number in the arsenal this
+        //   PC sends, so a player without this kit sees the right rate too.
+        // - the screens show it as the arsenal's type (FUN_14016d5f0: picture 0x7e + the number).
+        // So in the multiplayer profile the number always follows the arsenal, 1 to 3, also while the editor is open, as a
+        // visual indicator; HookedSchoolLimit keeps the editor's limit at 3 whatever the number says. The story profile is
+        // left alone. An empty arsenal counts as 1, so a first skill doesn't change its number.
+        // Schools: skill record DAT_1404bdc50 + id * 0x90, +0x12, above 0 (as FUN_14015b830); Aura Particles have none.
+        constexpr int kMaxCaseSchools = 3;
+
+        int SchoolsInArsenal(const uint8_t* arsenal, const uint8_t* skills)
+        {
+            uint32_t seen = 0;
+            for (int i = 0; i < 30; ++i)
+            {
+                int16_t id = *reinterpret_cast<const int16_t*>(arsenal + 0x14 + i * 2);
+                if (id < 0) continue;
+                int16_t school = *reinterpret_cast<const int16_t*>(skills + 0x12 + id * 0x90);
+                if (school > 0 && school < 32) seen |= 1u << school;
+            }
+            int count = 0;
+            for (; seen; seen &= seen - 1) ++count;
+            return count;
+        }
+
+        int CaseNumberFor(const uint8_t* arsenal, const uint8_t* skills, int& schools)
+        {
+            schools = SchoolsInArsenal(arsenal, skills);
+            return schools < 1 ? 1 : schools > kMaxCaseSchools ? kMaxCaseSchools : schools;
+        }
+
+        // The arsenal the editor is working on, wherever it holds it: DAT_1404c0140 +0x10a0 (FUN_14016fe20) and +0x4a8
+        // (FUN_14016d460, FUN_140217620).
+        void EditedArsenalsFollow(const uint8_t* skills)
+        {
+            uint8_t* editor = *reinterpret_cast<uint8_t**>(At(0x1404c0140));
+            uint8_t* held[2] = { editor ? *reinterpret_cast<uint8_t**>(editor + 0x10a0) : nullptr, editor ? *reinterpret_cast<uint8_t**>(editor + 0x4a8) : nullptr };
+            for (uint8_t* arsenal : held)
+            {
+                if (!arsenal) continue;
+                int schools = 0;
+                int wanted = CaseNumberFor(arsenal, skills, schools);
+                auto& number = *reinterpret_cast<int16_t*>(arsenal + 0x50);
+                if (number != wanted) number = static_cast<int16_t>(wanted);
+            }
+        }
+
+        void CasesFollowArsenals(bool editing)
+        {
+            __try
+            {
+                uint8_t* save = *reinterpret_cast<uint8_t**>(At(0x1404bec10));
+                uint8_t* skills = *reinterpret_cast<uint8_t**>(At(0x1404bdc50));
+                if (!save || !skills || !MultiplayerProfile()) return;
+                uint8_t* list = *reinterpret_cast<uint8_t**>(save + 0x10a * 0x38);
+                int cases = *reinterpret_cast<int32_t*>(save + 0x3a48);
+                for (int i = 0; list && i < cases && i < 16; ++i)
+                {
+                    uint8_t* arsenal = list + i * 100;
+                    int schools = 0;
+                    int wanted = CaseNumberFor(arsenal, skills, schools);
+                    auto& number = *reinterpret_cast<int16_t*>(arsenal + 0x50);
+                    if (number == wanted) continue;
+                    if (!editing) Log(L"gamepatch: arsenal case %d: %d school(s) in it, number %d (was %d)", i, schools, wanted, number);
+                    number = static_cast<int16_t>(wanted);
+                }
+                if (editing) EditedArsenalsFollow(skills);
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER) {}
+        }
+
+        // The editor's "too many schools" check when saving (session command at 0x140216cc0). The game compares counters with
+        // the arsenal's number, but those counters weren't current when tested, so here the schools are counted in the arsenal
+        // itself. Arsenals made before the limit can still reach it; HookedSetSkill stops new ones.
+        NativeFn g_schoolLimit = nullptr;
+        int64_t HookedSchoolLimit(int64_t* args)
+        {
+            if (!MultiplayerProfile()) return g_schoolLimit(args);
+            __try
+            {
+                uint8_t* editor = *reinterpret_cast<uint8_t**>(At(0x1404c0140));
+                uint8_t* skills = *reinterpret_cast<uint8_t**>(At(0x1404bdc50));
+                uint8_t* held[2] = { editor ? *reinterpret_cast<uint8_t**>(editor + 0x10a0) : nullptr, editor ? *reinterpret_cast<uint8_t**>(editor + 0x4a8) : nullptr };
+                int used = 0;
+                for (uint8_t* arsenal : held)
+                    if (arsenal && skills) used = (std::max)(used, SchoolsInArsenal(arsenal, skills));
+                Log(L"gamepatch: arsenal save check: %d school(s), limit %d", used, kMaxCaseSchools);
+                return used > kMaxCaseSchools ? 1 : 0;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                return 0;
+            }
+        }
+
+        // The editor putting a skill in a slot, FUN_140159db0(state, skill, c): state +0x48 is the arsenal; skill 0 empties
+        // the slot; below 0 takes the skill selected in the list (state +0x278 the list, +0x27c + list * 0x18 the row,
+        // DAT_1404c0140 +0x138c + ((list - 1) * 0x3ea + row) * 2). It replaces the slot's skill, state +0x84 + index * 8, index
+        // from state +0x174 + (state +0x268) * 8. Below 0 is its own refusal: -3 ("more than 3 of the same skill") makes the
+        // caller set state +0xb38 = 10, and the editor's script (arsenaledit, English) then shows its pop-up. So a skill that
+        // would make a 4th school returns -3 too, with the pop-up's text swapped first; it's swapped back before any other try.
+        using SetSkillFn = int (*)(uint8_t* state, int skill, int c);
+
+        bool WouldPassSchoolLimit(uint8_t* state, int skill)
+        {
+            __try
+            {
+                uint8_t* editor = *reinterpret_cast<uint8_t**>(At(0x1404c0140));
+                uint8_t* skills = *reinterpret_cast<uint8_t**>(At(0x1404bdc50));
+                uint8_t* arsenal = *reinterpret_cast<uint8_t**>(state + 0x48);
+                if (!editor || !skills || !arsenal) return false;
+                if (skill < 0)
+                {
+                    int list = *reinterpret_cast<int32_t*>(state + 0x278);
+                    if (list < 1) return false;
+                    int row = *reinterpret_cast<int32_t*>(state + 0x27c + list * 0x18);
+                    skill = *reinterpret_cast<int16_t*>(editor + 0x138c + ((list - 1) * 0x3ea + row) * 2);
+                }
+                if (skill <= 0) return false;
+                int16_t school = *reinterpret_cast<int16_t*>(skills + 0x12 + skill * 0x90);
+                if (school <= 0 || school >= 32) return false;
+                int slot = *reinterpret_cast<int32_t*>(state + 0x174 + *reinterpret_cast<int32_t*>(state + 0x268) * 8);
+                int16_t replaced = slot < 0 ? -1 : *reinterpret_cast<int16_t*>(state + 0x84 + slot * 8);
+                if (replaced <= 0) replaced = -1;
+                uint32_t seen = 1u << school;
+                bool skipped = false;
+                for (int i = 0; i < 30; ++i)
+                {
+                    int16_t id = *reinterpret_cast<int16_t*>(arsenal + 0x14 + i * 2);
+                    if (id < 0) continue;
+                    if (id == replaced && !skipped) { skipped = true; continue; }
+                    int16_t other = *reinterpret_cast<int16_t*>(skills + 0x12 + id * 0x90);
+                    if (other > 0 && other < 32) seen |= 1u << other;
+                }
+                int count = 0;
+                for (; seen; seen &= seen - 1) ++count;
+                return count > kMaxCaseSchools;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                return false;
+            }
+        }
+
+        void SwapRefusalText(bool schools)
+        {
+            static constexpr const char* kSameSkill = "You cannot place more than 3 of the same \nskill in an arsenal.";
+            static constexpr const char* kSchools = "You cannot use more than 3 schools \nin an arsenal."; // not longer: it's written over the other
+            uint8_t* script = *reinterpret_cast<uint8_t* volatile*>(At(0x1403fa3d0) + kEditorMenu * 0x18 + 0x10);
+            if (!script) return;
+            const Relabel swap = schools ? Relabel{ kSameSkill, kSchools } : Relabel{ kSchools, kSameSkill };
+            RelabelScript(script, &swap, 1);
+        }
+
+        int HookedSetSkill(uint8_t* state, int skill, int c)
+        {
+            if (skill != 0 && MultiplayerProfile() && WouldPassSchoolLimit(state, skill))
+            {
+                Log(L"gamepatch: arsenal editor: skill refused, a school past the limit of %d", kMaxCaseSchools);
+                SwapRefusalText(true);
+                return -3;
+            }
+            SwapRefusalText(false);
+            return reinterpret_cast<SetSkillFn>(At(0x140159db0))(state, skill, c);
+        }
+
+        int64_t HookedDrawText(int64_t* args); // (below)
+
+        // The shop (menu 6) builds its stock as it opens, with script group 3 #310 (prices and stock, FUN_1401ce100) or #347
+        // (stock, FUN_1401cdef0); the case list (30) then shows bit N of 0x14052ad0e as a case for N + 1 schools. In the
+        // multiplayer profile only the first stays: one plain case, as in the Lab.
+        NativeFn g_shopStock = nullptr, g_shopStock2 = nullptr;
+        void OneCaseInStock() { if (MultiplayerProfile()) *At(0x14052ad0e) = 1; }
+        int64_t HookedShopStock(int64_t* args) { int64_t r = g_shopStock(args); OneCaseInStock(); return r; }
+        int64_t HookedShopStock2(int64_t* args) { int64_t r = g_shopStock2(args); OneCaseInStock(); return r; }
+
+        // The buy list's row "%d-School Arsenal Case\a346r\a1f%d\a0f credits" (schools, price) is drawn as "Arsenal Case ..."
+        // with the price only. True when `changed` holds the call to make instead.
+        bool CaseRowText(const int64_t* args, int64_t* changed)
+        {
+            static constexpr char kRow[] = "%d-School Arsenal Case";
+            if (!args || CurrentMenu(MenuManager()) != kCaseBuyMenu || !MultiplayerProfile()) return false;
+            char format[96];
+            if (!CopyString(reinterpret_cast<const char*>(args[2]), format, sizeof(format)) || strncmp(format, kRow, sizeof(kRow) - 1) != 0) return false;
+            static char text[96];
+            snprintf(text, sizeof(text), "Arsenal Case%s", format + sizeof(kRow) - 1);
+            changed[0] = args[0];
+            changed[1] = args[1];
+            changed[2] = reinterpret_cast<int64_t>(text);
+            for (int i = 3; i < 7; ++i) changed[i] = args[i + 1]; // the school number dropped
+            changed[7] = 0;
+            return true;
+        }
+
+        // An arsenal's panel (FUN_14016d5f0: case picture, name, skills) draws "<prefix><slot, 2 digits>" above the name when its
+        // 6th argument is 0 or more, and uses that argument for nothing else. The slot number means nothing to players (the
+        // user), so the three calls pass -1 and the label isn't drawn.
+        using ArsenalPanelFn = void (*)(int64_t a, int x, int y, int64_t arsenal, int64_t e, int slot, int colour, int h);
+        void HookedArsenalPanel(int64_t a, int x, int y, int64_t arsenal, int64_t e, int slot, int colour, int h)
+        {
+            reinterpret_cast<ArsenalPanelFn>(At(0x14016d5f0))(a, x, y, arsenal, e, -1, colour, h);
+        }
+
+        void DynamicCases()
+        {
+            int panels = 0;
+            for (uint64_t site : { 0x14015c683ull, 0x14016d5c8ull, 0x1401704baull })
+                panels += HookCall(site, 0x14016d5f0, reinterpret_cast<void*>(&HookedArsenalPanel)) ? 1 : 0;
+            Log(L"gamepatch: arsenal slot label hidden on %d of 3 panels", panels);
+            if (!g_drawText) WrapCommand<MenuCommandFn>(0x1403eefe0 + 23 * 8, 0x140207840, &HookedDrawText, g_drawText, L"arsenal case row text");
+            WrapCommand<NativeFn>(0x1403ef390 + 310 * 8, 0x14020bd40, &HookedShopStock, g_shopStock, L"shop case stock");
+            WrapCommand<NativeFn>(0x1403ef390 + 347 * 8, 0x14020c3d0, &HookedShopStock2, g_shopStock2, L"shop case stock (2)");
+            bool limit = WrapCommand<NativeFn>(0x1403f1e48, 0x140216cc0, &HookedSchoolLimit, g_schoolLimit, L"arsenal school limit");
+            bool add = true;
+            for (uint64_t site : { 0x140159434ull, 0x14015948full, 0x140159be4ull })
+                add = HookCall(site, 0x140159db0, reinterpret_cast<void*>(&HookedSetSkill)) && add;
+            std::thread([]
+            {
+                for (;;)
+                {
+                    Sleep(50);
+                    int32_t state = *reinterpret_cast<volatile int32_t*>(At(0x1404bc950)); // 0 or 13: not in a match
+                    if (state == 0 || state == 13) CasesFollowArsenals(CurrentMenu(MenuManager()) == kEditorMenu);
+                }
+            }).detach();
+            Log(L"gamepatch: dynamic arsenal cases on (limit of %d schools: when adding %s, when saving %s)", kMaxCaseSchools, add ? L"ready" : L"NOT ready", limit ? L"ready" : L"NOT ready");
+        }
+
         void OpenCaseMenu(int menu)
         {
             Log(L"gamepatch: Arsenal Lab: %s Arsenal Case picked", menu == kCaseBuyMenu ? L"Buy" : L"Sell");
@@ -2506,6 +2745,8 @@ namespace pdnet::gamepatches
             if (*reinterpret_cast<uint64_t*>(At(0x1404c5228)) && memcmp(At(0x1401ce100), "\x48\x83\xec\x28\x48\x8b\x05", 7) == 0)
                 reinterpret_cast<void (*)()>(At(0x1401ce100))();
             else Log(L"gamepatch: Arsenal Lab: shop stock not built - the game code or data is not what this pdnet expects");
+            // Dynamic cases: one plain case to buy (bit N of the stock = a case for N + 1 schools, FUN_1401c40b0).
+            if (menu == kCaseBuyMenu && MultiplayerProfile()) *At(0x14052ad0e) = 1;
             int64_t manager = MenuManager();
             *At(0x1404bbc34) = 0; // as FUN_140207020 (the script's "open menu")
             g_pushMenu(manager, menu, 0);
@@ -2947,6 +3188,7 @@ namespace pdnet::gamepatches
 
         int64_t HookedDrawText(int64_t* args)
         {
+            if (int64_t row[8]; CaseRowText(args, row)) return g_drawText(row);
             int menu = CurrentMenu(MenuManager());
             if (args && GetConfig().ratedLobbies && (menu == kSessionListMenu || menu == kLobbyMenu))
             {
@@ -3844,11 +4086,26 @@ namespace pdnet::gamepatches
         return done;
     }
 
+    bool HookCall(uint64_t siteAddress, uint64_t target, void* hook)
+    {
+        uint8_t* site = At(siteAddress);
+        // A call, or a jump that ends a function in a call's place (e9): the hook returns to the same place either way.
+        if ((site[0] != 0xe8 && site[0] != 0xe9) || site + 5 + *reinterpret_cast<int32_t*>(site + 1) != At(target)) return false;
+        uint8_t* cave = CodeCave(16);
+        if (!cave) return false;
+        std::vector<uint8_t> toHook = { 0xff, 0x25, 0x00, 0x00, 0x00, 0x00 }; // jmp [rip+0]
+        Put64(toHook, reinterpret_cast<uint64_t>(hook));
+        std::vector<uint8_t> call = { site[0] };
+        Put32(call, Rel32(site + 5, cave));
+        return Write(cave, toHook) && Write(site, call);
+    }
+
     void Apply()
     {
         static std::once_flag once;
         std::call_once(once, []
         {
+            DynamicCases();
             if (!HookFileOpens()) Log(L"gamepatch: title screen: CreateFile2 import not found");
             g_bodyTags = GetConfig().nametagsOnBodies ? 1 : 0;
             NametagsAlwaysOn();

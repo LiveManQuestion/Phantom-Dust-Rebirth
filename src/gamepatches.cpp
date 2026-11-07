@@ -688,6 +688,8 @@ namespace pdnet::gamepatches
         PushMenuFn g_pushMenu = nullptr; // the original functions (trampolines)
         PopMenuFn g_popMenu = nullptr;
         std::atomic<bool> g_editorFromLobby{ false };
+        int32_t g_lobbyVariable2 = 0; // menu variable 2 as the lobby had it when its Arsenal Lab button was used
+        void RestoreLobbyVariable2() { MenuVariables()[2] = g_lobbyVariable2; }
         // The lobby ended while its Arsenal editor was open (LobbyEnded): leaving the editor then opens livegterr, the
         // lobby's own way out when its session is lost (livegterr 84 -> liveerror 53 -> liveend 52 -> mainmenu 8).
         // Going back into livelobby instead would start a match with nobody (menu 1).
@@ -911,6 +913,7 @@ namespace pdnet::gamepatches
                     return g_pushMenu(manager, kLobbyLostMenu, force);
                 }
                 Log(L"menu: leaving the Arsenal Lab opened from the lobby - back to the lobby instead of menu %d", menu);
+                RestoreLobbyVariable2();
                 int result = g_popMenu();
                 SetLobbyAvailable(true);
                 return result;
@@ -1002,6 +1005,7 @@ namespace pdnet::gamepatches
                     Log(L"menu: leaving the Arsenal Lab - the lobby ended meanwhile, so out the lobby's way (menu %d)", kLobbyLostMenu);
                     return g_pushMenu(manager, kLobbyLostMenu, 0);
                 }
+                RestoreLobbyVariable2();
                 int result = g_popMenu();
                 SetLobbyAvailable(true); // back in the lobby: no red hand
                 return result;
@@ -3355,6 +3359,14 @@ namespace pdnet::gamepatches
             Log(L"menu: menu variable 0 was %d - 0 for the Arsenal Lab", MenuVariables()[0]);
             MenuVariables()[0] = 0;
         }
+        // The Laboratory reads variable 2 as it starts (script command 14) and hands it to g5 #112, which keeps bit 16 at
+        // editor state +0xb58: the split-screen "Player 2's copied arsenal" flag. The multiplayer menu zeroes variables
+        // 0-2 before the Lab, but here a value left by the lobby's own screens (its arsenal picker, menu 67) could show
+        // "Player 2, edits made to the copied arsenal data will only be in effect for the current game session". It is
+        // 0 in the Lab and goes back to what the lobby had when the player returns (RestoreLobbyVariable2).
+        g_lobbyVariable2 = MenuVariables()[2];
+        if (g_lobbyVariable2 != 0) Log(L"menu: menu variable 2 was 0x%X - 0 for the Arsenal Lab (back on return)", g_lobbyVariable2);
+        MenuVariables()[2] = 0;
         *At(0x1404bbc34) = 0; // as the script's own "open menu" command does (FUN_140207020)
         g_pushMenu(manager, kLabMenu, 0);
         return true;

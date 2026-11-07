@@ -41,7 +41,8 @@ Steps
 2. Unzip this kit to a folder that will stay put, e.g. Documents\PhantomDust-pdnet.
    (Not inside the zip preview, and don't move or delete the folder while pdnet is set up.)
 3. Double-click Setup.bat.
-   - Unpacked copy that isn't installed yet: it asks for the game folder and installs it.
+   - Unpacked copy that isn't installed yet: it asks for the game folder and installs it. If the copy still has
+     the Store signature files, it moves them into a _store_signature folder first (Windows won't install it with them).
    - Unpacked copy set up with an OLDER kit (Install.bat): it puts the original game files back first.
    - Type your player name when asked.
    - Answer Y to let Phantom Dust use your microphone (voice chat). N: Windows asks the first time instead.

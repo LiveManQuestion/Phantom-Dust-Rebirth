@@ -45,7 +45,7 @@ As of Experimental 98. *(untested)* = waiting for a test in a real match.
 - How to Play button back (opens phantomdust.online)
 - "Xbox Live" reads "Online"
 - Options: Send Log, Updates, Aura Particle Beeps
-- Multiplayer: Settings menu, Online Store removed, Trade reads "Theater"
+- Multiplayer: Online Settings menu, Online Store removed, Trade reads "Theater"
 - Scoreboard: Global boards only
 - Lobby: Arsenal Lab button, Rated / Unrated shown
 - Lab: Buy, Sell and Test Arsenal rows

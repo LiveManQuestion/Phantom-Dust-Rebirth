@@ -1467,8 +1467,8 @@ namespace pdnet::gamepatches
             { "OptiMatch", "Lobby Browser" },
             { "Search for a game session with the Quick game rule.", "Join the first open game session you can play in." },
             { "Select game attributes, and then search for a game session.", "Choose search options, then pick a session." },
-            { "Xbox Live Options", "Settings" },
-            { "Online Options", "Settings" }, // the script's text once RenameXboxLive got to it
+            { "Xbox Live Options", "Online Settings" },
+            { "Online Options", "Online Settings" }, // the script's text once RenameXboxLive got to it
             { "Display the Options menu.", "Your name, nametags, start-up volume and Discord posts." },
         };
 
@@ -2093,8 +2093,8 @@ namespace pdnet::gamepatches
         }
 
         constexpr Relabel kSettingsTexts[] = {
-            { "XBOX LIVE OPTIONS", "SETTINGS" },
-            { "ONLINE OPTIONS", "SETTINGS" }, // once RenameXboxLive got to it
+            { "XBOX LIVE OPTIONS", "ONLINE SETTINGS" },
+            { "ONLINE OPTIONS", "ONLINE SETTINGS" }, // once RenameXboxLive got to it (it fits: the text was "XBOX LIVE OPTIONS")
         };
 
         int PatchSettingsScript(uint8_t* script)
@@ -4546,7 +4546,7 @@ namespace pdnet::gamepatches
             WrapCommand<MenuCommandFn>(0x1403eefe0 + 42 * 8, 0x140207f00, &HookedDrawWindow, g_drawWindow, L"settings save pop-up");
             WrapCommand<NativeFn>(0x1403fb108, 0x1402168a0, &HookedButtons, g_buttons, L"settings save confirmation");
             InstallBackButton(); // also takes session command 154, which the Settings rows use
-            if (g_optionChanged) Log(L"gamepatch: in-game Settings ready (multiplayer menu > Settings)");
+            if (g_optionChanged) Log(L"gamepatch: in-game Settings ready (multiplayer menu > Online Settings)");
             if (WrapCommand<MenuCommandFn>(0x1403eefe0 + 40 * 8, 0x140207e20, &HookedAddItem, g_addItem, L"menu item names"))
                 Log(L"gamepatch: menu items renamed as they are added (Quick Join, Lobby Browser%s)", GetConfig().scoreboard ? L", Global scoreboards only" : L"");
             SoundOptions(); // Options > Sound: Aura Particle Beeps

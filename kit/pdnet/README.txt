@@ -82,7 +82,7 @@ To stop using pdnet: bash setup-linux.sh --remove. Setting up a newer kit: run i
 
 Settings (pdnet.ini in the pdnet folder)
 -----------------------------------
-Change them in the game: multiplayer menu > Settings (left / right on a row; Name: press left or right, type,
+Change them in the game: multiplayer menu > Online Settings (left / right on a row; Name: press left or right, type,
 Enter). Or edit pdnet.ini with Notepad, then restart the game.
 What you save in the game goes to settings.ini (in the game's own data folder) and overrides pdnet.ini.
 To change those by hand, e.g. an exact nametag colour, close the game and double-click pdnet\Edit-Settings.bat.
@@ -99,7 +99,7 @@ Updates: Main menu > Options > Updates picks Public, Stable or Experimental buil
   voice_mode=            mic: the in-game option is called Mic and turns only your microphone on/off
                          classic: the original Voice Chat option - Off means you neither talk nor hear
   voice_listen=          on/off: hear other players (mic mode only)
-  partner_aim=           what the partner lock input does in a match (Multiplayer > Settings > Partner Aim):
+  partner_aim=           what the partner lock input does in a match (Multiplayer > Online Settings > Partner Aim):
                          modern: locks onto your partner; classic: turns the original Lock Onto Partner option on/off,
                          so switch target can also reach your partner
   partner_lock_key=      keyboard key for that input in a match (default Tab; none = off).

@@ -4413,11 +4413,20 @@ namespace pdnet::gamepatches
             // right after: they stay as the game has them.)
             if (g_previewTownClosing && MenuGameState(gameState))
             {
+                // A session started with "menu after" -1 ends in game state 13 (FUN_14012b7a0), not the menus' 0, and
+                // the lobby's join then failed: the tester toaf, right after a preview, was "half-joined" (P2P link up,
+                // then the join-error menus 84 / 53 after 6 s). The menus are back at 0 once the session has closed.
+                if (gameState == 13)
+                {
+                    *reinterpret_cast<int32_t*>(At(0x1404bc950)) = 0;
+                    Log(L"preview: town session closed - game state 13 -> 0 (the menus' own)");
+                }
                 g_previewTownClosing = false;
                 if (!g_previewTownAgain)
                 {
                     RestorePreviewZone();
-                    RestoreMenuAudio();
+                    // (RestoreMenuAudio here jammed the audio loader: 3 jobs left queued and the game stuck for good when
+                    // the player backed out of the Lab at the same moment. Not called; the menus load their own sound.)
                     PreviewAreaBanner(true);
                     KeepPreviewTrack(L"after the session");
                     g_previewTrack = -1;

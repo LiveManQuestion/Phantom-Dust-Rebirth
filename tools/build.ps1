@@ -177,6 +177,10 @@ if ($Mode -eq 'public') {
         if (-not $value) { Write-Host "No $key in private\public-links.ini: left empty in the Public kit." -ForegroundColor Yellow }
         $ini = $ini -replace "(?m)^$key=.*$", "$key=$value"
     }
+    # Public kits follow the public channel by default (the user, 2026-11-10). Options > Updates in the game (saved in
+    # settings.ini) still wins over this line.
+    $ini = $ini -replace '(?m)^update_channel=.*$', 'update_channel=public'
+    if ($ini -notmatch '(?m)^update_channel=public') { Write-Host 'pdnet.ini has no update_channel line: the Public kit keeps its default (the kind, public).' -ForegroundColor Yellow }
     Set-Content $iniPath $ini -Encoding UTF8 -NoNewline
     Zip $unpacked $to
     Write-Host "Experimental $n is now also $to"

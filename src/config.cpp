@@ -74,7 +74,7 @@ namespace pdnet
         // The top of settings.ini. Files written before the second line existed get it on their next save.
         constexpr char kSettingsHeader[] = "; pdnet settings saved from the game's Settings menu (they override pdnet.ini)";
         constexpr char kSettingsHelp[] = "; You can edit this file by hand with the game closed. Colours take any hex code (RRGGBB), e.g. 7FFFD4.";
-        constexpr char kSettingsUpdates[] = "; update_channel: public, stable, experimental or off (off: no automatic updates). Empty: this kit's own kind.";
+        constexpr char kSettingsUpdates[] = "; update_channel: stable, experimental or off (off: no automatic updates). Empty: this kit's own kind.";
 
         // A hand-edited "key = value" or an indented line counts as that key's.
         bool IsKeyLine(const std::string& line, const std::string& key)

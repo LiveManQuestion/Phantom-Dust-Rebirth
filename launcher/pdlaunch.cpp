@@ -776,10 +776,10 @@ namespace
 
     // ---- Updates (from GitHub Releases) -------------------------------------------------------------------------------
     // build.bat publishes every Experimental kit as a pre-release and every Stable as a release, each with a
-    // secret-free "pdnet-update-<build>.zip" (no eos.ini, no Discord links; a Public, release "public-<P>", has
-    // "pdnet-public-<build>.zip" instead and is read only on the public channel) and the line
+    // secret-free "pdnet-update-<build>.zip" (no eos.ini, no Discord links; a Stable also carries the whole kit for first
+    // installs) and the line
     // "sha256 pdnet-update-<build>.zip <hex>" in its notes. At game start, before pdnet is injected, CheckForUpdate
-    // looks for a higher build on this kit's channel (update_channel=public|stable|experimental|off; by default the kit's own
+    // looks for a higher build on this kit's channel (update_channel=stable|experimental|off; by default the kit's own
     // kind, and off for development builds; an Experimental kit on the stable channel goes back to the newest Stable), downloads it into pdnet\update\ (inside the kit folder, so the files get
     // the folder's read access for the game's sandbox), checks the hash, moves what it replaces to
     // pdnet\update\backup\ (put back if the swap fails) and swaps the files in; after a good swap pdnet\update\ is deleted. eos.ini and pdnet.ini are never touched. A pdnet.dll that doesn't
@@ -908,28 +908,28 @@ namespace
         // Conceptual kits (build.bat conceptual, from the Conceptual branch) are never published and never updated:
         // an update would replace the concept with a master build.
         if (kit.label.find("Conceptual") != std::string::npos) { Log(L"update: off (Conceptual build)"); return; }
+        // Stable is the public version since 2026-11-10 (the separate public channel and its Public kits are gone): a
+        // "Public" kit, or update_channel=public left in a Public kit's pdnet.ini, follows Stable.
         std::wstring fallback = kit.label.find("Experimental") != std::string::npos ? L"experimental"
-                              : kit.label.find("Stable") != std::string::npos ? L"stable"
-                              : kit.label.find("Public") != std::string::npos ? L"public" : L"off";
+                              : kit.label.find("Stable") != std::string::npos || kit.label.find("Public") != std::string::npos ? L"stable" : L"off";
         std::wstring channel = Setting(L"update_channel", L"");
         for (auto& c : channel) c = static_cast<wchar_t>(towlower(c));
-        if (!channel.empty() && channel != L"public" && channel != L"stable" && channel != L"experimental" && channel != L"off")
+        if (channel == L"public") channel = L"stable";
+        if (!channel.empty() && channel != L"stable" && channel != L"experimental" && channel != L"off")
         {
             // A typo in settings.ini must not count as stable, which would take an Experimental kit back to a Stable.
-            Log(L"update: update_channel=%s isn't public, stable, experimental or off - using this kit's own (%s)", channel.c_str(), fallback.c_str());
+            Log(L"update: update_channel=%s isn't stable, experimental or off - using this kit's own (%s)", channel.c_str(), fallback.c_str());
             channel.clear();
         }
         if (channel.empty()) channel = fallback;
         if (channel == L"off") { Log(L"update: off (%s)", fallback == L"off" ? L"development build" : L"update_channel=off"); return; }
         bool experimental = channel == L"experimental";
-        // Each channel takes only its own releases (tag build-<N> / stable-<M> / public-<P>, which is in each asset's
-        // download link): a Public must not reach Stable kits, and a kit switched to another channel gets that kind's
-        // label from its own release (a Stable's asset has the same name as its Experimental's).
-        std::string tagPrefix = channel == L"public" ? "/download/public-" : experimental ? "/download/build-" : "/download/stable-";
-        const char* kindName = channel == L"public" ? "Public" : experimental ? "Experimental" : "Stable";
-        // A Public's asset is "pdnet-public-<build>.zip": launchers from before the public channel take any full release's
-        // "pdnet-update-<build>.zip" as a Stable, and would have moved Stable kits to a Public.
-        std::string assetMarker = channel == L"public" ? "/pdnet-public-" : "/pdnet-update-";
+        // Each channel takes only its own releases (tag build-<N> / stable-<M>, which is in each asset's download link):
+        // a kit switched to another channel gets that kind's label from its own release (a Stable's asset has the same
+        // name as its Experimental's).
+        std::string tagPrefix = experimental ? "/download/build-" : "/download/stable-";
+        const char* kindName = experimental ? "Experimental" : "Stable";
+        std::string assetMarker = "/pdnet-update-";
 
         std::string md5 = HashHex(BCRYPT_MD5_ALGORITHM, ReadFileBytes(g_dir + L"pdnet.dll")).substr(0, 8);
         if (!kit.md5.empty() && md5 != kit.md5)
@@ -988,7 +988,7 @@ namespace
             Log(L"update: %s channel, but no %S build is published yet - keeping build %d", channel.c_str(), kindName, kit.build);
             return;
         }
-        // (Going back installs even the same build number: that kit then is a Stable / Public, with that kind's label.)
+        // (Going back installs even the same build number: that kit then is a Stable / an Experimental, with that kind's label.)
         if (!revert && best <= kit.build)
         {
             Log(L"update: up to date (build %d, %s channel)", kit.build, channel.c_str());

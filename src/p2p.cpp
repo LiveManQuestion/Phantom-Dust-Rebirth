@@ -21,6 +21,8 @@ namespace pdnet::p2p
 #else
 
 #include "eossdk.h"
+#include <iphlpapi.h>
+#pragma comment(lib, "iphlpapi.lib")
 #include <condition_variable>
 #include <deque>
 #include <thread>
@@ -61,6 +63,7 @@ namespace pdnet::p2p
             // ping window (monitor thread only)
             std::vector<int> rtts;
             int pingsSent = 0;
+            int silentReports = 0; // reports in a row with game packets in but none out
         };
 
         std::function<void(const net::Message&)> g_onControl;
@@ -545,6 +548,10 @@ namespace pdnet::p2p
                         if (link->rtts.size() > 1) jitter /= static_cast<int>(link->rtts.size() - 1);
                     }
                     int lost = link->pingsSent - static_cast<int>(link->rtts.size());
+                    // The other PC's game packets arrive but this game sends none into the link (Risryn, 2026-11-10).
+                    if (link->outPackets == 0 && link->inPackets > 0 && link->silentReports++ == 1)
+                        Log(L"p2p: %S's game packets arrive, but this game has sent none into the link for 20 s - see the self-test lines (own address, game port)", link->peer.substr(0, 8).c_str());
+                    if (link->outPackets > 0) link->silentReports = 0;
                     if (link->pingsSent >= 4 && lost == link->pingsSent)
                         NoAnswer(link->peer, path.rfind(L"relayed", 0) == 0 ? L"answered none of the last pings over the relay" : L"answered none of the last pings",
                                  path.rfind(L"relayed", 0) == 0);
@@ -560,6 +567,80 @@ namespace pdnet::p2p
 
     bool Enabled() { return GetConfig().p2p && eos::SignedIn(); }
 
+    namespace
+    {
+        // Self-test at start: the game's packets reach a link by UDP to this PC's own address, from inside the game
+        // (a Store-style app: Windows blocks that without Setup's loopback exemption, and firewalls can too). A player
+        // (Risryn, 2026-11-10) never sent a single game packet into a link, though the links were up and answered
+        // pings, and the other players' packets came in; running Setup.bat again didn't help. So this logs (1) whether
+        // UDP to this PC's own address gets through, from a socket like the links' to another one, and (2) which
+        // process holds the game's port (another program on it would leave the game unable to send).
+        void SelfTest()
+        {
+            auto open = []
+            {
+                SOCKET s = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+                DWORD off = 0, timeout = 1500;
+                setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<const char*>(&off), sizeof(off));
+                setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+                sockaddr_in6 any{};
+                any.sin6_family = AF_INET6;
+                if (s != INVALID_SOCKET && bind(s, reinterpret_cast<sockaddr*>(&any), sizeof(any)) != 0) { closesocket(s); s = INVALID_SOCKET; }
+                return s;
+            };
+            SOCKET a = open(), b = open();
+            if (a == INVALID_SOCKET || b == INVALID_SOCKET)
+            {
+                Log(L"p2p: self-test: could not open test sockets (%d)", WSAGetLastError());
+            }
+            else
+            {
+                sockaddr_in6 bound{};
+                int len = sizeof(bound);
+                getsockname(b, reinterpret_cast<sockaddr*>(&bound), &len);
+                auto to = net::GameSockAddr(net::InterfaceIp(), ntohs(bound.sin6_port));
+                const char probe[] = "pdnet-selftest";
+                int sent = sendto(a, probe, sizeof(probe), 0, reinterpret_cast<const sockaddr*>(&to), sizeof(to));
+                int sendError = sent == SOCKET_ERROR ? WSAGetLastError() : 0;
+                char buf[64];
+                int got = sent == SOCKET_ERROR ? -1 : recv(b, buf, sizeof(buf), 0);
+                if (got == sizeof(probe)) Log(L"p2p: self-test: UDP to this PC's own address (%s) gets through", net::IpToString(net::InterfaceIp()).c_str());
+                else Log(L"p2p: self-test: UDP to this PC's own address (%s) does NOT get through (%s %d) - the game can't reach its links: run Setup.bat again and allow the administrator prompt, and check firewall / antivirus",
+                         net::IpToString(net::InterfaceIp()).c_str(), sendError ? L"send error" : L"nothing arrived, error", sendError ? sendError : WSAGetLastError());
+            }
+            if (a != INVALID_SOCKET) closesocket(a);
+            if (b != INVALID_SOCKET) closesocket(b);
+
+            // Who holds the game's UDP port.
+            uint16_t port = GetConfig().gamePort;
+            DWORD self = GetCurrentProcessId();
+            std::wstring holders;
+            for (ULONG family : { AF_INET, AF_INET6 })
+            {
+                ULONG size = 0;
+                GetExtendedUdpTable(nullptr, &size, FALSE, family, UDP_TABLE_OWNER_PID, 0);
+                std::vector<uint8_t> table(size + 256);
+                size = static_cast<ULONG>(table.size());
+                if (GetExtendedUdpTable(table.data(), &size, FALSE, family, UDP_TABLE_OWNER_PID, 0) != NO_ERROR) continue;
+                if (family == AF_INET)
+                {
+                    auto t = reinterpret_cast<MIB_UDPTABLE_OWNER_PID*>(table.data());
+                    for (DWORD i = 0; i < t->dwNumEntries; ++i)
+                        if (ntohs(static_cast<u_short>(t->table[i].dwLocalPort)) == port)
+                            holders += (t->table[i].dwOwningPid == self ? L" IPv4: the game" : L" IPv4: OTHER process " + std::to_wstring(t->table[i].dwOwningPid));
+                }
+                else
+                {
+                    auto t = reinterpret_cast<MIB_UDP6TABLE_OWNER_PID*>(table.data());
+                    for (DWORD i = 0; i < t->dwNumEntries; ++i)
+                        if (ntohs(static_cast<u_short>(t->table[i].dwLocalPort)) == port)
+                            holders += (t->table[i].dwOwningPid == self ? L" IPv6: the game" : L" IPv6: OTHER process " + std::to_wstring(t->table[i].dwOwningPid));
+                }
+            }
+            Log(L"p2p: self-test: UDP port %u held by:%s", port, holders.empty() ? L" nobody yet (the game opens it when it joins)" : holders.c_str());
+        }
+    }
+
     void Start(std::function<void(const net::Message&)> onControl)
     {
         static std::once_flag once;
@@ -571,6 +652,7 @@ namespace pdnet::p2p
             std::thread(Monitor).detach();
             eos::SetPump(Pump);
             Log(L"p2p: starting (game datagrams via EOS P2P; links on %s)", net::IpToString(net::InterfaceIp()).c_str());
+            std::thread([] { Sleep(3000); SelfTest(); }).detach(); // after the game has opened its port
         });
     }
 

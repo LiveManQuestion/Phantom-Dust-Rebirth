@@ -199,12 +199,11 @@ namespace pdnet::p2p
             }
             if (!remake)
             {
-                Log(L"p2p: %S %s - relays on here; the other PC (lower id) remakes the connection", peer.substr(0, 8).c_str(), what);
-                {
-                    std::lock_guard guard(g_outLock);
-                    g_relayWanted = true;
-                }
-                eos::Wake();
+                // Nothing is changed here, not even this PC's relay setting: switching it while the other PC remade the
+                // connection made EOS drop that connection on this side ("Modifying the configuration in an unsupported
+                // way", closed, then "dropping ... from unknown peer"), and EOS's signalling only recovered after its own
+                // 30 s timeout: the joiner's game had given up by then (2026-11-10, Experimental 139, Bosharoo / Risryn).
+                Log(L"p2p: %S %s - leaving it to the other PC (lower id), which remakes the connection through the relay", peer.substr(0, 8).c_str(), what);
                 return;
             }
             Log(L"p2p: %S %s - reconnecting through Epic's relay", peer.substr(0, 8).c_str(), what);

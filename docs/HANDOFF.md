@@ -397,6 +397,14 @@ Earlier note (written while paused): the user chose to build from Stable 11's co
 - Plan when resumed: commit, build.bat experimental (133), test the public channel with pdlaunch -update on a temporary kit, then build.bat public 133 and push the tag.
 Stable 11 (2026-11-07): Experimental 132 promoted at the user's request (build.bat promote 132). Tag stable-11 = master 6a35d38, pushed; release stable-11 published. Since Stable 10: Stable kits see Stable releases again (pdlaunch reads all release pages; kits still on Stable 10's launcher pick it up only now that a newer Stable exists near the top), pdnet stays set up after a restart, Setup installs Store-signed unpacked copies, How to Play is back, dynamic arsenal cases (PR #5), keyboard fixes and partner lock (Modern / Classic), Test Arsenal picks, the lobby Arsenal Lab fix.
 Lobby Arsenal Lab: no "Player 2 copied arsenal" warning (2026-11-07, Experimental 132, confirmed by the user in Stable 11; 131 was the dynamic-cases build from pull request #5). Reported in Experimental 130: the lobby's Arsenal Lab button could show the split-screen warning "Player 2, edits made to the copied arsenal data will only be in effect for the current game session". The Laboratory reads menu variable 2 as it starts (script cmd 14) and hands it to g5 #112, which keeps bit 16 at [0x1404bec08]+0xb58 (the same flag g5 #119 returns: see the paused skill preview note). The multiplayer menu zeroes variables 0-2 before the Lab, but OpenLobbyArsenalEditor fixed only variable 0. A value left by the lobby's screens (likely the arsenal picker, menu 67, opened just before in the log) set it. Now OpenLobbyArsenalEditor saves variable 2 and sets it to 0, and both back-to-the-lobby paths (HookedPushMenu, HookedPopMenu) restore it (RestoreLobbyVariable2). Not confirmed live: the variable's value was never read.
+Confirmed by the user (2026-11-11): Experimental 136 (lobby joins after using the skill preview: game state 13 -> 0) and Experimental 139/140 (relay remakes: only the lower-id PC remakes, the waiting PC leaves its connection alone) count as done.
+Still open:
+- Risryn's joins (waiting for a 143 log; possibly Norton's firewall);
+- Norton blocking Setup.bat (needs the detection name);
+- blank lobby rows (logs from "Player 000261" / "Player 000221");
+- toaf's skill preview without story progress (on hold);
+- a Public 2 to bring the network fixes to Public players.
+
 Self-test, more detail (2026-11-10, Experimental 143). Risryn has the loopback exemption (CheckNetIsolation -s lists it) and the Windows Firewall entirely off, yet UDP to the PC's own address doesn't arrive. The self-test now:
 - tests 127.0.0.1 as well as the own address;
 - lists every adapter that is up (name, description, type, addresses), to show a VPN or virtual adapter;

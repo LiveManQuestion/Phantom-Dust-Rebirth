@@ -403,12 +403,13 @@ Release model reframed (2026-11-10, the user's request): Stable is now the publi
 - The public-1 release and tag were deleted (GitHub and local). Public 1 players switch Options > Updates to Stable themselves. Their old launcher won't follow Stable by itself; the first update brings the new one.
 - Stable 11 still has the tester links; the next promote is the first Stable with the public links.
 Confirmed by the user (2026-11-10): Experimental 136 (lobby joins after using the skill preview: game state 13 -> 0) and Experimental 139/140 (relay remakes: only the lower-id PC remakes, the waiting PC leaves its connection alone) count as done.
+Blank lobby rows (Experimental 138): done, the user confirmed (2026-11-10).
 Still open:
 - Risryn's joins (waiting for a 143 log; possibly Norton's firewall);
 - Norton blocking Setup.bat (needs the detection name);
-- blank lobby rows (logs from "Player 000261" / "Player 000221");
 - toaf's skill preview without story progress (on hold);
-- a Public 2 to bring the network fixes to Public players.
+- a new Stable (the public version) to bring the network fixes to everyone;
+- Chaos Murloc was still on Experimental 120 (the Player 2 warning, fixed in 132): why the kit didn't update itself needs their pdlaunch-log.
 
 Self-test, more detail (2026-11-10, Experimental 143). Risryn has the loopback exemption (CheckNetIsolation -s lists it) and the Windows Firewall entirely off, yet UDP to the PC's own address doesn't arrive. The self-test now:
 - tests 127.0.0.1 as well as the own address;

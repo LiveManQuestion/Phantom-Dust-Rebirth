@@ -86,6 +86,7 @@ namespace pdnet::p2p
         std::vector<std::string> g_accept; // players to accept connections from ahead of their request (Expect; under g_outLock)
         // Players whose direct connection gets no answer, to reconnect over Epic's relays (NoAnswer; under g_outLock).
         std::vector<std::string> g_reroute;
+        bool g_relayWanted = false; // relays on without remaking a connection (NoAnswer, the higher-id PC; under g_outLock)
         bool g_relayForced = false; // EOS thread only
 
         std::mutex g_dispatchLock;
@@ -167,20 +168,44 @@ namespace pdnet::p2p
         // never got a packet through, while forcing the relay on works). With p2p_relay=allow, this switches EOS to
         // relays only for the rest of the game run and reconnects that player through them (done on the EOS thread,
         // in Pump: relay settings only reach a connection when it is made again). Once per player per minute.
-        void NoAnswer(const std::string& peer, const wchar_t* what)
+        //
+        // Only one of the two PCs remakes the connection: the one with the lower EOS product user id. Both used to do it
+        // at about the same time (each side's own check fires within seconds of the other's), the two remakes collided
+        // (EOS: "connection candidate address for unknown session id"), and both sides then showed a relayed connection
+        // that carried nothing, for good (2026-11-10, Risryn joining Bosharoo: every later join failed). The other PC
+        // switches to relays and waits for the new connection; if a minute later it is still asked to (the lower one
+        // may run an older pdnet), it remakes the connection itself.
+        // `deadRelay`: the connection is already relayed but answers nothing (Monitor): it is remade the same way. Before,
+        // a relayed connection was never remade, so a dead one stayed dead.
+        void NoAnswer(const std::string& peer, const wchar_t* what, bool deadRelay = false)
         {
             if (_wcsicmp(GetConfig().p2pRelay.c_str(), L"allow") != 0) return;
+            if (!deadRelay)
             {
                 std::lock_guard guard(g_lock);
                 if (auto it = g_paths.find(peer); it != g_paths.end() && it->second.rfind(L"relayed", 0) == 0) return;
             }
             static std::mutex lock;
             static std::map<std::string, ULONGLONG> last;
+            static std::map<std::string, int> deferred; // times this PC left the remake to the other one
+            bool remake = true;
             {
                 std::lock_guard guard(lock);
                 ULONGLONG& at = last[peer];
                 if (at && GetTickCount64() - at < 60000) return;
                 at = GetTickCount64();
+                std::string me = winrt::to_string(eos::LocalUserId());
+                if (!me.empty() && _stricmp(me.c_str(), peer.c_str()) > 0 && deferred[peer]++ == 0) remake = false;
+            }
+            if (!remake)
+            {
+                Log(L"p2p: %S %s - relays on here; the other PC (lower id) remakes the connection", peer.substr(0, 8).c_str(), what);
+                {
+                    std::lock_guard guard(g_outLock);
+                    g_relayWanted = true;
+                }
+                eos::Wake();
+                return;
             }
             Log(L"p2p: %S %s - reconnecting through Epic's relay", peer.substr(0, 8).c_str(), what);
             {
@@ -330,13 +355,15 @@ namespace pdnet::p2p
             // Send everything queued (after accepting the players Expect named).
             std::deque<Outgoing> out;
             std::vector<std::string> accept, reroute;
+            bool relayWanted = false;
             {
                 std::lock_guard guard(g_outLock);
                 out.swap(g_out);
                 accept.swap(g_accept);
                 reroute.swap(g_reroute);
+                std::swap(relayWanted, g_relayWanted);
             }
-            if (!reroute.empty() && !g_relayForced)
+            if ((!reroute.empty() || relayWanted) && !g_relayForced)
             {
                 EOS_P2P_SetRelayControlOptions rc{ EOS_P2P_SETRELAYCONTROL_API_LATEST, EOS_ERelayControl::EOS_RC_ForceRelays };
                 EOS_EResult r = api.EOS_P2P_SetRelayControl(p2p, &rc);
@@ -519,7 +546,9 @@ namespace pdnet::p2p
                         if (link->rtts.size() > 1) jitter /= static_cast<int>(link->rtts.size() - 1);
                     }
                     int lost = link->pingsSent - static_cast<int>(link->rtts.size());
-                    if (link->pingsSent >= 4 && lost == link->pingsSent) NoAnswer(link->peer, L"answered none of the last pings");
+                    if (link->pingsSent >= 4 && lost == link->pingsSent)
+                        NoAnswer(link->peer, path.rfind(L"relayed", 0) == 0 ? L"answered none of the last pings over the relay" : L"answered none of the last pings",
+                                 path.rfind(L"relayed", 0) == 0);
                     Log(L"p2p: link %S %s | ping %d ms (%d-%d) jitter %d ms, %d/%d pings lost | game out %llu pkt %llu KB, in %llu pkt %llu KB",
                         link->peer.substr(0, 8).c_str(), path.c_str(), avg, lo, hi, jitter, lost, link->pingsSent,
                         link->outPackets.exchange(0), link->outBytes.exchange(0) / 1024, link->inPackets.exchange(0), link->inBytes.exchange(0) / 1024);

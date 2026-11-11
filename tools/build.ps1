@@ -79,8 +79,9 @@ function RepoSlug {
     if ($url -match 'github\.com[:/](.+?)(\.git)?$') { $Matches[1] } else { 'SnowRyze/Phantom-Dust-Rebirth' }
 }
 
-# Creates a GitHub release with one asset; returns its web page, or $null (with the reason printed) if it didn't happen.
-function PublishRelease([string]$tag, [string]$target, [string]$title, [bool]$prerelease, [string]$notes, [string[]]$assetPaths) {
+# Creates a GitHub release with its assets; returns its web page, or $null (with the reason printed) if it didn't happen.
+# $labels maps an asset's file name to the name GitHub shows for it (the file name, which the updater looks for, stays).
+function PublishRelease([string]$tag, [string]$target, [string]$title, [bool]$prerelease, [string]$notes, [string[]]$assetPaths, [hashtable]$labels = @{}) {
     $tokenFile = Join-Path $root 'private\github-token.txt'
     if (-not (Test-Path $tokenFile)) { Write-Host "Not published to GitHub: no private\github-token.txt (see README, Publishing updates)." -ForegroundColor Yellow; return $null }
     $headers = @{ Authorization = "Bearer $((Get-Content $tokenFile -Raw).Trim())"; Accept = 'application/vnd.github+json'; 'User-Agent' = 'pdnet-build' }
@@ -91,7 +92,9 @@ function PublishRelease([string]$tag, [string]$target, [string]$title, [bool]$pr
         if ($target) { $body.target_commitish = $target }
         $release = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$repo/releases" -Headers $headers -Body ($body | ConvertTo-Json) -ContentType 'application/json'
         foreach ($assetPath in $assetPaths) {
-            $upload = ($release.upload_url -replace '\{.*$', '') + '?name=' + [Uri]::EscapeDataString((Split-Path $assetPath -Leaf))
+            $leaf = Split-Path $assetPath -Leaf
+            $upload = ($release.upload_url -replace '\{.*$', '') + '?name=' + [Uri]::EscapeDataString($leaf)
+            if ($labels.ContainsKey($leaf)) { $upload += '&label=' + [Uri]::EscapeDataString($labels[$leaf]) }
             Invoke-RestMethod -Method Post -Uri $upload -Headers $headers -InFile $assetPath -ContentType 'application/zip' | Out-Null
         }
         return $release.html_url
@@ -154,7 +157,10 @@ if ($Mode -eq 'promote') {
     if ($source) { $ErrorActionPreference = 'Continue'; $fullSource = git -C $root rev-parse $source 2>$null; $ErrorActionPreference = 'Stop' } # GitHub wants the full hash
     $sha = (Get-FileHash $asset -Algorithm SHA256).Hash.ToLower()
     $notes = "Build $build`r`n`r`nPhantom Dust Rebirth, Stable $number (Experimental $n).`r`n`r`nFirst install: download $(Split-Path $download -Leaf), unzip it to a folder that stays put and double-click Setup.bat (see pdnet\README.txt).`r`n`r`nsha256 $(Split-Path $asset -Leaf) $sha`r`n`r`nInstalled kits update themselves at game start (Main menu > Options > Updates)."
-    $page = PublishRelease "stable-$number" $fullSource "Stable $number" $false $notes @($download, $asset)
+    # The update zip has no eos.ini, so it can't be a first install: its title on the release page says so (the user,
+    # 2026-11-10). Only the shown name changes; pdlaunch still finds it by its file name.
+    $updateLabel = @{ (Split-Path $asset -Leaf) = "DO NOT DOWNLOAD - automatic updates only (pdnet-update-$build.zip)" }
+    $page = PublishRelease "stable-$number" $fullSource "Stable $number" $false $notes @($download, $asset) $updateLabel
     if ($page) { Write-Host "Published: $page" -ForegroundColor Green }
     exit 0
 }

@@ -61,6 +61,9 @@ Commit and push before `build.bat experimental`: a release has to point at a com
 `build-linux.sh` builds pdnet.dll on Linux with clang-cl and lld-link, for running the game under wine-uwp. Its header
 lists what it needs (xwin's Windows SDK, a C++/WinRT projection, Epic's SDK). Contributed by DeadMan009.
 
+`flatpak/` packages wine-uwp, a Stable kit and the kit's Linux setup as a Flatpak, without any game or Windows files
+(see [flatpak/README.md](flatpak/README.md)). The **Flatpak** workflow builds it for each Stable release.
+
 ### Numbered kits
 
 - `build.bat experimental "what changed"` also saves the kit as the next `PhantomDust-pdnet Experimental <N>.zip`

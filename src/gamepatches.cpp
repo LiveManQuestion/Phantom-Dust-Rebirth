@@ -3295,6 +3295,15 @@ namespace pdnet::gamepatches
                 // character, Alpha, is drawn as "player". Any other name there is a character without a list entry.
                 if (strcmp(format, "\a130c%s") == 0)
                 {
+                    // Diagnostics (151: Alpha still showed the previous character's colours): every change of the name.
+                    static std::string lastName;
+                    static int changes = 0;
+                    if (value != lastName && changes < 300)
+                    {
+                        ++changes;
+                        Log(L"gamepatch: character select: name line now '%S' (argument %llX)", value.c_str(), args[3]);
+                        lastName = value;
+                    }
                     g_shownCharacter = nullptr;
                     if (_stricmp(value.c_str(), "player") == 0) value = "Alpha";
                 }
@@ -3308,6 +3317,14 @@ namespace pdnet::gamepatches
                 return false;
             }
             int colour = static_cast<int>(args[3]);
+            static const CharacterColours* lastUsed = reinterpret_cast<const CharacterColours*>(1);
+            static int uses = 0;
+            if (g_shownCharacter != lastUsed && uses < 300)
+            {
+                ++uses;
+                Log(L"gamepatch: character select: COLORS rows for %S", g_shownCharacter ? g_shownCharacter->name : "(no character)");
+                lastUsed = g_shownCharacter;
+            }
             if (!g_shownCharacter || colour < 1 || colour > 4)
             {
                 static int told = 0;

@@ -168,7 +168,8 @@ if [ $action = update ]; then
     label=$(kv 1p); build=$(kv 's/^Build: //p'); want_md5=$(kv 's/^pdnet\.dll MD5 //p' | tr 'A-F' 'a-f')
     # Conceptual kits are never published: an update would replace the concept with a master build.
     case $label in *Conceptual*) say "Updates are off for this kit (Conceptual build)."; exit 0 ;; esac
-    case $label in *Experimental*) own_channel=experimental ;; *Stable*) own_channel=stable ;; *) own_channel=off ;; esac
+    # Stable is the public version since build 144: a Public kit follows Stable
+    case $label in *Experimental*) own_channel=experimental ;; *Stable*|*Public*) own_channel=stable ;; *) own_channel=off ;; esac
     channel=""
     # update_channel: the kit's pdnet.ini, the game's copy, then the file in-game Options > Updates writes (later wins)
     for f in "$kit/pdnet.ini" "$game/pdnet.ini" "$data/prefix/drive_c/users/$USER/AppData/Local/Packages/$family/LocalState/pdnet/settings.ini"; do
@@ -176,6 +177,7 @@ if [ $action = update ]; then
         if [ -n "$c" ]; then channel=$c; fi
     done
     channel=$(printf '%s' "$channel" | tr 'A-Z' 'a-z')
+    [ "$channel" = public ] && channel=stable
     case $channel in
         stable|experimental|off) ;;
         "") channel=$own_channel ;;

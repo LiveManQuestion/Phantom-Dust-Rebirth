@@ -2747,8 +2747,12 @@ namespace pdnet::gamepatches
                 for (;;)
                 {
                     Sleep(50);
-                    int32_t state = *reinterpret_cast<volatile int32_t*>(At(0x1404bc950)); // 0 or 13: not in a match
-                    if (state == 0 || state == 13) CasesFollowArsenals(CurrentMenu(MenuManager()) == kEditorMenu);
+                    // 0 or 13: not in a match. In the Lab's own screens too: since the skill preview (Experimental 135)
+                    // the editor runs on top of pdnet's town session, game state 6, and the arsenal being edited kept
+                    // its old number, e.g. "Limit[1]" with 2 schools in it (2026-11-11, Stable 12, MojoJoey).
+                    int32_t state = *reinterpret_cast<volatile int32_t*>(At(0x1404bc950));
+                    int menu = CurrentMenu(MenuManager());
+                    if (state == 0 || state == 13 || InLabMenus(menu)) CasesFollowArsenals(menu == kEditorMenu);
                 }
             }).detach();
             Log(L"gamepatch: dynamic arsenal cases on (limit of %d schools: when adding %s, when saving %s)", kMaxCaseSchools, add ? L"ready" : L"NOT ready", limit ? L"ready" : L"NOT ready");
@@ -3127,8 +3131,14 @@ namespace pdnet::gamepatches
 
         using MenuFrameFn = void (*)(int64_t manager);
         MenuFrameFn g_menuFrame = nullptr;
+        void PreviewWatchdog(); // where the game stops when the preview hangs (below)
+        std::atomic<ULONGLONG> g_menuFrameAt{ 0 };
+        std::atomic<DWORD> g_menuFrameThread{ 0 };
+
         void HookedMenuFrame(int64_t manager)
         {
+            g_menuFrameAt = GetTickCount64();
+            if (!g_menuFrameThread) { g_menuFrameThread = GetCurrentThreadId(); PreviewWatchdog(); }
             g_menuFrame(manager);
             BackButtonTick(manager);
             PreviewTick();
@@ -4476,6 +4486,75 @@ namespace pdnet::gamepatches
                 // (Loading the menu's audio profile here, while the session still ran, crashed: FUN_14021a6a0 frees the
                 // profile in use. It is loaded once the session has closed.)
             }
+        }
+
+        // Testers without story progress (toaf, mitocato) had the game stop for good as they left the editor or stock list,
+        // the last log line being the preview's state 4 (stopping). If the menu frames stop for 3 s while pdnet's town
+        // session is there, the game's main thread is paused for a moment and its call stack logged (Ghidra addresses),
+        // up to 3 times per stop.
+        void PreviewWatchdog()
+        {
+            std::thread([]
+            {
+                int reports = 0;
+                for (;;)
+                {
+                    Sleep(500);
+                    ULONGLONG since = GetTickCount64() - g_menuFrameAt;
+                    if (since < 3000 || !(g_previewTown || g_previewTownClosing)) { if (since < 3000) reports = 0; continue; }
+                    if (reports >= 3) continue;
+                    ++reports;
+                    HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, g_menuFrameThread);
+                    if (!thread) continue;
+                    uint64_t frames[24] = {};
+                    int count = 0;
+                    if (SuspendThread(thread) != static_cast<DWORD>(-1))
+                    {
+                        CONTEXT context{};
+                        context.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+                        if (GetThreadContext(thread, &context))
+                        {
+                            // Unwinding reads only the modules' own tables: nothing here allocates while the thread is paused.
+                            for (; count < 24 && context.Rip; ++count)
+                            {
+                                frames[count] = context.Rip;
+                                DWORD64 base = 0;
+                                PRUNTIME_FUNCTION entry = RtlLookupFunctionEntry(context.Rip, &base, nullptr);
+                                if (!entry)
+                                {
+                                    context.Rip = *reinterpret_cast<DWORD64*>(context.Rsp);
+                                    context.Rsp += 8;
+                                    continue;
+                                }
+                                void* handlerData = nullptr;
+                                DWORD64 establisher = 0;
+                                RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, context.Rip, entry, &context, &handlerData, &establisher, nullptr);
+                            }
+                        }
+                        ResumeThread(thread);
+                    }
+                    CloseHandle(thread);
+                    uint64_t image = reinterpret_cast<uint64_t>(At(kGhidraBase));
+                    std::wstring stack;
+                    for (int i = 0; i < count; ++i)
+                    {
+                        wchar_t one[48];
+                        HMODULE module = nullptr;
+                        wchar_t name[MAX_PATH] = L"?";
+                        if (frames[i] >= image && frames[i] < image + 0x1000000) swprintf_s(one, L" %llx", frames[i] - image + kGhidraBase);
+                        else
+                        {
+                            if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCWSTR>(frames[i]), &module))
+                                GetModuleFileNameW(module, name, MAX_PATH);
+                            const wchar_t* file = wcsrchr(name, L'\\');
+                            swprintf_s(one, L" %s+%llx", file ? file + 1 : name, frames[i] - reinterpret_cast<uint64_t>(module));
+                        }
+                        stack += one;
+                    }
+                    Log(L"preview: the game has stopped for %llu s (preview state %d, game state %d, menu %d) - main thread at:%s", since / 1000,
+                        *reinterpret_cast<int32_t*>(At(0x140534798)), *reinterpret_cast<int32_t*>(At(0x1404bc950)), CurrentMenu(MenuManager()), stack.c_str());
+                }
+            }).detach();
         }
 
         void SkillPreviewScene()

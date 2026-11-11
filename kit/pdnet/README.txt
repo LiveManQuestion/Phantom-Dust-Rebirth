@@ -117,6 +117,8 @@ If something goes wrong
 -----------------------
 - The game starts with Xbox Live as usual: pdnet didn't load. Run pdnet\Collect-Log.bat and send pdlaunch-log.
 - "Windows refused to attach pdlaunch": send a screenshot.
-- Lobbies work but matches don't connect: run Setup.bat again and allow the administrator prompt.
+- Lobbies work but matches don't connect (or joining never finishes): run Setup.bat again and allow the administrator
+  prompt. It also lets Phantom Dust through the Windows Firewall (and switches off firewall rules that block it;
+  pdnet\firewall.log says what it did). A third-party firewall or antivirus can block it too.
 - Nobody hears you: check the lobby's Options > Mic (Voice Chat in classic mode) is On, and that Windows allows
   Phantom Dust to use the microphone (Settings > Privacy > Microphone).

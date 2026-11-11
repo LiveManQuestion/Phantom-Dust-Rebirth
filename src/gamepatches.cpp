@@ -3271,24 +3271,42 @@ namespace pdnet::gamepatches
             char format[64];
             if (!CopyString(reinterpret_cast<const char*>(args[2]), format, sizeof(format))) return false;
             std::string text = format;
-            if (const char* percent = strstr(format, "%s"); percent && percent[2] == 0)
+            std::string value; // the %s argument (Experimental 148 only read it when %s ended the text, and saw no names)
+            if (const char* percent = strstr(format, "%s"))
             {
-                char value[48];
-                if (CopyString(reinterpret_cast<const char*>(args[3]), value, sizeof(value))) text = std::string(format, percent - format) + value;
+                char copied[48];
+                if (args[3] > 0x10000 && CopyString(reinterpret_cast<const char*>(args[3]), copied, sizeof(copied)))
+                {
+                    value = copied;
+                    text = std::string(format, percent - format) + value + (percent + 2);
+                }
             }
             static std::set<std::string> logged;
-            if (logged.size() < 60 && logged.insert(text).second) Log(L"gamepatch: character select draws '%S'", PlainText(text.c_str()).c_str());
+            if (logged.size() < 80 && logged.insert(text).second)
+            {
+                std::string raw; // the text as the script has it, control codes shown as \a
+                for (const char* p = format; *p; ++p) raw += *p == '\a' ? std::string("\\a") : std::string(1, *p);
+                Log(L"gamepatch: character select draws '%S' (text '%S', argument %llX)", PlainText(text.c_str()).c_str(), raw.c_str(), args[3]);
+            }
             const char* number = strstr(format, "COLOR ");
             if (!number || !strstr(number, "%d"))
             {
-                std::string plain = PlainText(text.c_str());
-                while (!plain.empty() && plain.back() == ' ') plain.pop_back();
-                for (const auto& character : kCharacterColours)
-                    if (_stricmp(plain.c_str(), character.name) == 0) g_shownCharacter = &character;
+                for (std::string candidate : { PlainText(text.c_str()), PlainText(value.c_str()) })
+                {
+                    while (!candidate.empty() && candidate.back() == ' ') candidate.pop_back();
+                    while (!candidate.empty() && candidate.front() == ' ') candidate.erase(0, 1);
+                    for (const auto& character : kCharacterColours)
+                        if (!candidate.empty() && _stricmp(candidate.c_str(), character.name) == 0) g_shownCharacter = &character;
+                }
                 return false;
             }
             int colour = static_cast<int>(args[3]);
-            if (!g_shownCharacter || colour < 1 || colour > 4) return false;
+            if (!g_shownCharacter || colour < 1 || colour > 4)
+            {
+                static int told = 0;
+                if (told++ < 5) Log(L"gamepatch: character select: COLOR %d left as a number (%s)", colour, g_shownCharacter ? L"not 1-4" : L"no character name seen yet");
+                return false;
+            }
             static char replaced[64];
             std::string withName = format;
             withName.replace(withName.find("%d"), 2, "%s");

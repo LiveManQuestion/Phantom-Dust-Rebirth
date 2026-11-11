@@ -3218,9 +3218,91 @@ namespace pdnet::gamepatches
             return true;
         }
 
+        // Character select (livecharasel, menu 46): "COLOR \a1f%d" shows a number for each of a character's 4 colours.
+        // The user's list (2026-11-11) names them; the number becomes the name. The character is the last name drawn on
+        // the screen (the texts drawn there are logged once each, to check).
+        struct CharacterColours { const char* name; const char* colours[4]; };
+        constexpr CharacterColours kCharacterColours[] = {
+            { "Freia", { "Grey", "Red", "White", "Black" } },
+            { "Alpha", { "Green", "Red", "Black", "White" } },
+            { "Edgar", { "Black", "White", "Orange", "Blue" } },
+            { "Meister", { "Black", "White", "Yellow", "Red" } },
+            { "Chunky", { "Black", "White", "Yellow", "Red" } },
+            { "Cuff Button", { "Black", "White", "Yellow", "Red" } },
+            { "PH", { "Black", "White", "Yellow", "Red" } },
+            { "Know", { "Green", "Red", "White", "Brown" } },
+            { "Tsubutaki", { "Blue", "Yellow", "Orange", "Teal" } },
+            { "JD", { "Purple", "Green", "White", "Black" } },
+            { "Sammah", { "Yellow", "Blue", "Red", "White" } },
+            { "Vestio", { "Brown", "Black", "Purple", "White" } },
+            { "Ommato", { "Grey", "Blue", "Red", "Black" } },
+            { "Anthro", { "Brown", "White", "Red", "Yellow" } },
+            { "Guard", { "Grey", "Full Blue", "Yellow", "Blue" } },
+            { "Andro", { "Grey", "Red", "Yellow", "Blue" } },
+            { "Ceno", { "White", "Brown", "Purple", "Black" } },
+            { "Partheno", { "Grey", "White", "Red", "Yellow" } },
+            { "Catoptro", { "Brown", "White", "Red", "Blue" } },
+            { "Gyne", { "Maroon", "Yellow", "Red", "White" } },
+            { "Claustro", { "Navy", "White", "Black", "Yellow" } },
+            { "Scoto", { "Navy", "Red", "White", "Yellow" } },
+        };
+        const CharacterColours* g_shownCharacter = nullptr;
+
+        // The text with the game's \a control codes (\a + digits + one letter) left out.
+        std::string PlainText(const char* text)
+        {
+            std::string plain;
+            for (const char* p = text; *p; ++p)
+            {
+                if (*p == '\a')
+                {
+                    while (p[1] >= '0' && p[1] <= '9') ++p;
+                    if (p[1]) ++p;
+                    continue;
+                }
+                plain += *p;
+            }
+            return plain;
+        }
+
+        bool ColourNameText(int64_t* args, int64_t* changed)
+        {
+            if (!args || CurrentMenu(MenuManager()) != kCharacterMenu) return false;
+            char format[64];
+            if (!CopyString(reinterpret_cast<const char*>(args[2]), format, sizeof(format))) return false;
+            std::string text = format;
+            if (const char* percent = strstr(format, "%s"); percent && percent[2] == 0)
+            {
+                char value[48];
+                if (CopyString(reinterpret_cast<const char*>(args[3]), value, sizeof(value))) text = std::string(format, percent - format) + value;
+            }
+            static std::set<std::string> logged;
+            if (logged.size() < 60 && logged.insert(text).second) Log(L"gamepatch: character select draws '%S'", PlainText(text.c_str()).c_str());
+            const char* number = strstr(format, "COLOR ");
+            if (!number || !strstr(number, "%d"))
+            {
+                std::string plain = PlainText(text.c_str());
+                while (!plain.empty() && plain.back() == ' ') plain.pop_back();
+                for (const auto& character : kCharacterColours)
+                    if (_stricmp(plain.c_str(), character.name) == 0) g_shownCharacter = &character;
+                return false;
+            }
+            int colour = static_cast<int>(args[3]);
+            if (!g_shownCharacter || colour < 1 || colour > 4) return false;
+            static char replaced[64];
+            std::string withName = format;
+            withName.replace(withName.find("%d"), 2, "%s");
+            strcpy_s(replaced, withName.c_str());
+            memcpy(changed, args, 8 * sizeof(int64_t));
+            changed[2] = reinterpret_cast<int64_t>(replaced);
+            changed[3] = reinterpret_cast<int64_t>(g_shownCharacter->colours[colour - 1]);
+            return true;
+        }
+
         int64_t HookedDrawText(int64_t* args)
         {
             if (int64_t row[8]; CaseRowText(args, row)) return g_drawText(row);
+            if (int64_t named[8]; ColourNameText(args, named)) return g_drawText(named);
             int menu = CurrentMenu(MenuManager());
             if (args && GetConfig().ratedLobbies && (menu == kSessionListMenu || menu == kLobbyMenu))
             {

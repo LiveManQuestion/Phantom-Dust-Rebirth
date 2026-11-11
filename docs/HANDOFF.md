@@ -403,12 +403,12 @@ Release model reframed (2026-11-10, the user's request): Stable is now the publi
 - The public-1 release and tag were deleted (GitHub and local). Public 1 players switch Options > Updates to Stable themselves. Their old launcher won't follow Stable by itself; the first update brings the new one.
 - Stable 11 still has the tester links; the next promote is the first Stable with the public links.
 Confirmed by the user (2026-11-10): Experimental 136 (lobby joins after using the skill preview: game state 13 -> 0) and Experimental 139/140 (relay remakes: only the lower-id PC remakes, the waiting PC leaves its connection alone) count as done.
+Stable 12 (2026-11-10): Experimental 145 promoted at the user's request (build.bat promote 145), the first Stable as the public version. Tag stable-12 = master 68ca15f, pushed. The release has the whole kit PhantomDust-Rebirth-Stable-12.zip (eos.ini and the public links from private\public-links.ini) and pdnet-update-145.zip. Since Stable 11: the skill preview in the multiplayer Lab and lobby (135/136), relay and join fixes (138-140), the 22 s P2P join wait, Setup's firewall step (142), the network self-test (141/143), Online Settings, the Public channel folded into Stable. Not in it: the dead-player free camera (Conceptual only).
 Blank lobby rows (Experimental 138): done, the user confirmed (2026-11-10).
 Still open:
 - Risryn's joins (waiting for a 143 log; possibly Norton's firewall);
 - Norton blocking Setup.bat (needs the detection name);
 - toaf's skill preview without story progress (on hold);
-- a new Stable (the public version) to bring the network fixes to everyone;
 - Chaos Murloc was still on Experimental 120 (the Player 2 warning, fixed in 132): why the kit didn't update itself needs their pdlaunch-log.
 
 Self-test, more detail (2026-11-10, Experimental 143). Risryn has the loopback exemption (CheckNetIsolation -s lists it) and the Windows Firewall entirely off, yet UDP to the PC's own address doesn't arrive. The self-test now:

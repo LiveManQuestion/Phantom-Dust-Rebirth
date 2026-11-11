@@ -3314,13 +3314,18 @@ namespace pdnet::gamepatches
                 if (told++ < 5) Log(L"gamepatch: character select: COLOR %d left as a number (%s)", colour, g_shownCharacter ? L"not 1-4" : L"no character name seen yet");
                 return false;
             }
-            static char replaced[64];
-            std::string withName = format;
+            // Only the name, in capitals: "COLOR Orange" ran past the COLORS box, and the font's lowercase letters looked
+            // out of place (the user, 2026-11-11). "COLOR " goes; the number's own style code (\a1f) stays.
+            static char replaced[64], names[4][24]; // a buffer per row: the game may keep the pointer until it draws
+            char* name = names[colour - 1];
+            std::string withName(number + 6);
             withName.replace(withName.find("%d"), 2, "%s");
-            strcpy_s(replaced, withName.c_str());
+            strcpy_s(replaced, (std::string(format, number - format) + withName).c_str());
+            strcpy_s(name, sizeof(names[0]), g_shownCharacter->colours[colour - 1]);
+            _strupr_s(name, sizeof(names[0]));
             memcpy(changed, args, 8 * sizeof(int64_t));
             changed[2] = reinterpret_cast<int64_t>(replaced);
-            changed[3] = reinterpret_cast<int64_t>(g_shownCharacter->colours[colour - 1]);
+            changed[3] = reinterpret_cast<int64_t>(name);
             return true;
         }
 

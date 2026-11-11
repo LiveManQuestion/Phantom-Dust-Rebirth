@@ -588,28 +588,57 @@ namespace pdnet::p2p
                 if (s != INVALID_SOCKET && bind(s, reinterpret_cast<sockaddr*>(&any), sizeof(any)) != 0) { closesocket(s); s = INVALID_SOCKET; }
                 return s;
             };
-            SOCKET a = open(), b = open();
-            if (a == INVALID_SOCKET || b == INVALID_SOCKET)
+            // UDP from one socket to another at `ip` (16 bytes, IPv4 as ::ffff:a.b.c.d): "ok", or why not.
+            auto probeTo = [&](const std::array<uint8_t, 16>& ip) -> std::wstring
             {
-                Log(L"p2p: self-test: could not open test sockets (%d)", WSAGetLastError());
-            }
-            else
+                SOCKET a = open(), b = open();
+                std::wstring result;
+                if (a == INVALID_SOCKET || b == INVALID_SOCKET) result = L"no test sockets (" + std::to_wstring(WSAGetLastError()) + L")";
+                else
+                {
+                    sockaddr_in6 bound{};
+                    int len = sizeof(bound);
+                    getsockname(b, reinterpret_cast<sockaddr*>(&bound), &len);
+                    auto to = net::GameSockAddr(ip, ntohs(bound.sin6_port));
+                    const char probe[] = "pdnet-selftest";
+                    char buf[64];
+                    if (sendto(a, probe, sizeof(probe), 0, reinterpret_cast<const sockaddr*>(&to), sizeof(to)) == SOCKET_ERROR)
+                        result = L"send error " + std::to_wstring(WSAGetLastError());
+                    else if (recv(b, buf, sizeof(buf), 0) == sizeof(probe)) result = L"ok";
+                    else result = L"nothing arrived (" + std::to_wstring(WSAGetLastError()) + L")";
+                }
+                if (a != INVALID_SOCKET) closesocket(a);
+                if (b != INVALID_SOCKET) closesocket(b);
+                return result;
+            };
+            std::array<uint8_t, 16> loopback{};
+            loopback[10] = loopback[11] = 0xff;
+            loopback[12] = 127;
+            loopback[15] = 1;
+            std::wstring own = probeTo(net::InterfaceIp()), local = probeTo(loopback);
+            if (own == L"ok") Log(L"p2p: self-test: UDP to this PC's own address (%s) gets through (127.0.0.1: %s)", net::IpToString(net::InterfaceIp()).c_str(), local.c_str());
+            else Log(L"p2p: self-test: UDP to this PC's own address (%s) does NOT get through (%s; 127.0.0.1: %s) - the game can't reach its links: run Setup.bat again and allow the administrator prompt, and check firewall / antivirus / VPN",
+                     net::IpToString(net::InterfaceIp()).c_str(), own.c_str(), local.c_str());
+
+            // This PC's network adapters (a VPN or virtual adapter can take the traffic to its own address elsewhere).
             {
-                sockaddr_in6 bound{};
-                int len = sizeof(bound);
-                getsockname(b, reinterpret_cast<sockaddr*>(&bound), &len);
-                auto to = net::GameSockAddr(net::InterfaceIp(), ntohs(bound.sin6_port));
-                const char probe[] = "pdnet-selftest";
-                int sent = sendto(a, probe, sizeof(probe), 0, reinterpret_cast<const sockaddr*>(&to), sizeof(to));
-                int sendError = sent == SOCKET_ERROR ? WSAGetLastError() : 0;
-                char buf[64];
-                int got = sent == SOCKET_ERROR ? -1 : recv(b, buf, sizeof(buf), 0);
-                if (got == sizeof(probe)) Log(L"p2p: self-test: UDP to this PC's own address (%s) gets through", net::IpToString(net::InterfaceIp()).c_str());
-                else Log(L"p2p: self-test: UDP to this PC's own address (%s) does NOT get through (%s %d) - the game can't reach its links: run Setup.bat again and allow the administrator prompt, and check firewall / antivirus",
-                         net::IpToString(net::InterfaceIp()).c_str(), sendError ? L"send error" : L"nothing arrived, error", sendError ? sendError : WSAGetLastError());
+                ULONG size = 32 * 1024;
+                std::vector<uint8_t> buffer(size);
+                auto adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
+                if (GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER, nullptr, adapters, &size) == NO_ERROR)
+                    for (auto a = adapters; a; a = a->Next)
+                    {
+                        if (a->OperStatus != IfOperStatusUp || a->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
+                        std::wstring addresses;
+                        for (auto u = a->FirstUnicastAddress; u; u = u->Next)
+                        {
+                            wchar_t text[64] = {};
+                            DWORD textLen = 64;
+                            if (WSAAddressToStringW(u->Address.lpSockaddr, u->Address.iSockaddrLength, nullptr, text, &textLen) == 0) addresses += L" " + std::wstring(text);
+                        }
+                        Log(L"p2p: self-test: adapter '%s' (%s, type %lu):%s", a->FriendlyName, a->Description, a->IfType, addresses.c_str());
+                    }
             }
-            if (a != INVALID_SOCKET) closesocket(a);
-            if (b != INVALID_SOCKET) closesocket(b);
 
             // Who holds the game's UDP port.
             uint16_t port = GetConfig().gamePort;
@@ -627,7 +656,13 @@ namespace pdnet::p2p
                     auto t = reinterpret_cast<MIB_UDPTABLE_OWNER_PID*>(table.data());
                     for (DWORD i = 0; i < t->dwNumEntries; ++i)
                         if (ntohs(static_cast<u_short>(t->table[i].dwLocalPort)) == port)
-                            holders += (t->table[i].dwOwningPid == self ? L" IPv4: the game" : L" IPv4: OTHER process " + std::to_wstring(t->table[i].dwOwningPid));
+                        {
+                            in_addr address{};
+                            address.S_un.S_addr = t->table[i].dwLocalAddr;
+                            wchar_t text[32] = {};
+                            InetNtopW(AF_INET, &address, text, 32);
+                            holders += (t->table[i].dwOwningPid == self ? L" IPv4 " + std::wstring(text) + L": the game" : L" IPv4: OTHER process " + std::to_wstring(t->table[i].dwOwningPid));
+                        }
                 }
                 else
                 {
@@ -765,6 +800,8 @@ namespace pdnet::p2p
         }
         link->port = ntohs(bound.sin6_port);
         g_links[peer] = link;
+        static std::once_flag again;
+        std::call_once(again, [] { std::thread(SelfTest).detach(); }); // again, now that the game holds its port
         std::thread(LinkReader, link).detach();
         Log(L"p2p: link to %S on local port %u", peer.substr(0, 8).c_str(), link->port);
         if (auto early = g_early.find(peer); early != g_early.end())

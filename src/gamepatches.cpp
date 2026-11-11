@@ -3291,6 +3291,13 @@ namespace pdnet::gamepatches
             const char* number = strstr(format, "COLOR ");
             if (!number || !strstr(number, "%d"))
             {
+                // The name line is "\a130c%s" with the character's name (Experimental 149, MojoJoey's log); the first
+                // character, Alpha, is drawn as "player". Any other name there is a character without a list entry.
+                if (strcmp(format, "\a130c%s") == 0)
+                {
+                    g_shownCharacter = nullptr;
+                    if (_stricmp(value.c_str(), "player") == 0) value = "Alpha";
+                }
                 for (std::string candidate : { PlainText(text.c_str()), PlainText(value.c_str()) })
                 {
                     while (!candidate.empty() && candidate.back() == ' ') candidate.pop_back();

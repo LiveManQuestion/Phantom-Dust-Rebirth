@@ -413,9 +413,9 @@ write_menu_entry() {
     } > "$menu_entry" || return 1
     command -v update-desktop-database >/dev/null && update-desktop-database -q "$(dirname "$menu_entry")" 2>/dev/null || true
 }
-launched=""
+launched="" flatpak=""
 if [ -f /.flatpak-info ] || [ -n "${FLATPAK_ID:-}" ]; then
-    :
+    flatpak=${FLATPAK_ID:-$(sed -n 's/^name=//p' /.flatpak-info 2>/dev/null | head -1)}
 elif write_launcher; then
     launched=1
     write_menu_entry || say "(Could not add the menu entry $menu_entry.)"
@@ -428,6 +428,10 @@ if [ -n "$launched" ]; then
     say "Set up as '$name'. Start Phantom Dust from your app menu (\"Phantom Dust Rebirth\") or with:"
     case ":$PATH:" in *":$(dirname "$launcher"):"*) say "  $(basename "$launcher")" ;; *) say "  $launcher" ;; esac
     say "Started that way, pdnet updates itself first, as on Windows (in-game Options > Updates; log: $uplog)."
+elif [ -n "$flatpak" ]; then
+    say "Set up as '$name'. Start Phantom Dust from your app menu or with:"
+    say "  flatpak run $flatpak"
+    say "pdnet updates itself when the game starts (in-game Options > Updates; log: $uplog)."
 else
     say "Set up as '$name'. Start Phantom Dust with:"
     say "  $wup run $app"

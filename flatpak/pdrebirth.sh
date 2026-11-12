@@ -198,7 +198,14 @@ case ${1:-} in
         # a newer Flatpak: its kit into the game, with the same name
         bash "$kit/setup-linux.sh" --name "$(player_name)" < /dev/null >> "$log" 2>&1 || true
     fi
-    exec "$WINE_UWP" run "$(basename "$(find_game)")"
+    app=$(basename "$(find_game)")
+    # A wine-uwp that runs the game folder's before-start.sh at each start updates pdnet through it. With one that
+    # doesn't (a build without that hook), do the update here, as the kit's own launcher does outside a Flatpak.
+    if ! grep -q before-start.sh "$(readlink -f "$WINE_UWP")" 2>/dev/null; then
+        bash "$kit/setup-linux.sh" --auto-update < /dev/null > "$data/logs/$app-before-start.log" 2>&1 ||
+            echo "pdnet update failed: see $data/logs/$app-before-start.log" >&2
+    fi
+    exec "$WINE_UWP" run "$app"
     ;;
 setup)       shift; setup_terminal "$@" ;;
 setup-steps) setup_steps "${2:-Player}" ;;   # internal: setup_windows runs it in its own session

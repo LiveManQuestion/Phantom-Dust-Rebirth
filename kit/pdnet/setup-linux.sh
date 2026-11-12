@@ -372,14 +372,16 @@ uplog="$data/logs/$app-before-start.log"
     printf 'exec bash %q --auto-update\n' "$kit/setup-linux.sh"
 } > "$game/before-start.sh"
 # Any other wine-uwp: the launcher does the update, then starts the game (pdlaunch's job on Windows).
-mkdir -p "$(dirname "$launcher")"
-{
-    printf '#!/usr/bin/env bash\n'
-    printf '# Phantom Dust Rebirth: update pdnet, then start the game, as pdlaunch.exe does on Windows\n'
-    printf '# (written by setup-linux.sh; running it again rewrites this file)\n'
-    [ -n "${WINE_UWP_DATA:-}" ] && printf 'export WINE_UWP_DATA=%q\n' "$WINE_UWP_DATA"
-    printf 'wup=%q kit=%q log=%q\n' "$wup" "$kit" "$uplog"
-    cat <<'EOF'
+# Not inside a Flatpak: its paths are the sandbox's, and the Flatpak starts the game its own way.
+write_launcher() {
+    mkdir -p "$(dirname "$launcher")" 2>/dev/null && [ -w "$(dirname "$launcher")" ] || return 1
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf '# Phantom Dust Rebirth: update pdnet, then start the game, as pdlaunch.exe does on Windows\n'
+        printf '# (written by setup-linux.sh; running it again rewrites this file)\n'
+        [ -n "${WINE_UWP_DATA:-}" ] && printf 'export WINE_UWP_DATA=%q\n' "$WINE_UWP_DATA"
+        printf 'wup=%q kit=%q log=%q\n' "$wup" "$kit" "$uplog"
+        cat <<'EOF'
 # a wine-uwp that runs before-start.sh at each start does the update itself
 if ! grep -q before-start.sh "$(readlink -f "$wup")" 2>/dev/null; then
     if [ -f "$kit/setup-linux.sh" ]; then
@@ -392,29 +394,46 @@ if ! grep -q before-start.sh "$(readlink -f "$wup")" 2>/dev/null; then
     fi
 fi
 EOF
-    printf 'exec "$wup" run %q "$@"\n' "$app"
-} > "$launcher"
-chmod 755 "$launcher"
+        printf 'exec "$wup" run %q "$@"\n' "$app"
+    } > "$launcher" && chmod 755 "$launcher"
+}
 # menu entry (Exec quoting from the desktop entry spec)
 dq() { printf '"%s"' "$(printf '%s' "$1" | sed 's/[\\"`$]/\\&/g; s/%/%%/g')"; }
 icon=""
 [ -f "$game/.wine-uwp-icon.png" ] && icon=$game/.wine-uwp-icon.png
-if [ ! -e "$menu_entry" ] || grep -qs 'written by setup-linux.sh' "$menu_entry"; then
-    mkdir -p "$(dirname "$menu_entry")"
+write_menu_entry() {
+    [ ! -e "$menu_entry" ] || grep -qs 'written by setup-linux.sh' "$menu_entry" || return 0
+    mkdir -p "$(dirname "$menu_entry")" 2>/dev/null || return 1
     {
         printf '[Desktop Entry]\n# written by setup-linux.sh (Phantom Dust Rebirth)\n'
         printf 'Type=Application\nName=Phantom Dust Rebirth\nComment=Phantom Dust with Rebirth online play (wine-uwp)\n'
         printf 'Exec=%s\n' "$(dq "$launcher")"
         [ -n "$icon" ] && printf 'Icon=%s\n' "$icon"
         printf 'Terminal=false\nCategories=Game;\nStartupWMClass=pduwp.exe\n'
-    } > "$menu_entry"
+    } > "$menu_entry" || return 1
     command -v update-desktop-database >/dev/null && update-desktop-database -q "$(dirname "$menu_entry")" 2>/dev/null || true
+}
+launched=""
+if [ -f /.flatpak-info ] || [ -n "${FLATPAK_ID:-}" ]; then
+    :
+elif write_launcher; then
+    launched=1
+    write_menu_entry || say "(Could not add the menu entry $menu_entry.)"
+else
+    say "(Could not write $launcher.)"
 fi
 
 say ""
-say "Set up as '$name'. Start Phantom Dust from your app menu (\"Phantom Dust Rebirth\") or with:"
-case ":$PATH:" in *":$(dirname "$launcher"):"*) say "  $(basename "$launcher")" ;; *) say "  $launcher" ;; esac
-say "Started that way, pdnet updates itself first, as on Windows (in-game Options > Updates; log: $uplog)."
+if [ -n "$launched" ]; then
+    say "Set up as '$name'. Start Phantom Dust from your app menu (\"Phantom Dust Rebirth\") or with:"
+    case ":$PATH:" in *":$(dirname "$launcher"):"*) say "  $(basename "$launcher")" ;; *) say "  $launcher" ;; esac
+    say "Started that way, pdnet updates itself first, as on Windows (in-game Options > Updates; log: $uplog)."
+else
+    say "Set up as '$name'. Start Phantom Dust with:"
+    say "  $wup run $app"
+    say "If your wine-uwp runs before-start.sh, pdnet updates itself at each start (log: $uplog);"
+    say "otherwise run $0 --update now and then."
+fi
 say "Keep this kit folder where it is: the updates go through it."
 say "The first title screen should say \"Rebirth\". Your Xbox profile doesn't show while pdnet is on: make a new one."
 say "After a test: $0 --logs     To stop using pdnet: $0 --remove"

@@ -57,7 +57,7 @@ pdnet\Restore-XboxLive.bat. It asks for administrator permission once.
 
 Linux (wine-uwp)
 ----------------
-Runs under wine-uwp (https://github.com/LiveManQuestion/wine-uwp), a Wine build for Microsoft Store games.
+Runs under wine-uwp (https://github.com/designgears/wine-uwp), a Wine build for Microsoft Store games.
 Needs a Microsoft account that owns Phantom Dust (free in the Store: "Get" it once at
 https://apps.microsoft.com/detail/9PCDNBHR11MR), about 25 GB free, a recent 64-bit distro (glibc 2.38+: Ubuntu 24.04,
 Debian 13, Fedora 39, Mint 22, Arch or newer), and GStreamer for the game's videos:
@@ -70,11 +70,13 @@ Debian 13, Fedora 39, Mint 22, Arch or newer), and GStreamer for the game's vide
    shows a sign-in link for your Microsoft account and downloads the game (about 10 GB). A licence error about the
    newest version is expected; it then takes the older one, which is the one pdnet is made for.
    Then type your player name.
-2. Start the game with the command it prints (~/.local/opt/wine-uwp/bin/wine-uwp run msesper).
+2. Start the game from your app menu ("Phantom Dust Rebirth") or with:  ~/.local/bin/phantom-dust-rebirth
+   (it does pdlaunch.exe's job: updates pdnet, then starts the game).
 3. After a test: bash setup-linux.sh --logs, and send the files it copies to your home folder.
-Updates: as on Windows, the kit updates itself when the game starts, so keep the kit folder where it is. A wine-uwp
-from before that (setup-linux.sh says so) needs  bash setup-linux.sh --update  now and then.
-Either way it gets the newest build on your channel from GitHub and keeps your eos.ini and pdnet.ini. Options >
+Updates: as on Windows, the kit updates itself when the game starts, so keep the kit folder where it is. Started
+with plain "wine-uwp run msesper", only a wine-uwp that runs before-start.sh does that; otherwise use
+bash setup-linux.sh --update  now and then.
+It gets the newest build on your channel from GitHub and keeps your eos.ini and pdnet.ini. Options >
 Updates in the game turns it off. If it can't update, the game starts as it is
 (log: ~/.local/share/wine-uwp/logs/msesper-before-start.log).
 To stop using pdnet: bash setup-linux.sh --remove. Setting up a newer kit: run its setup-linux.sh.

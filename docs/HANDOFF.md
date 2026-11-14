@@ -108,6 +108,8 @@ Ideas, not planned (notes in the change log and reference notes):
 
 ## November 2026
 
+Discord slot list showed a name twice (2026-11-14, Experimental 166, the user's screenshot: "3/4 ... DixMckenzie left the lobby" with Nui, Motley, AnoMayCry, AnoMayCry and no "< public slot >"). Card lists the host, then `order` (user ids in join order), then the free slots; `order` got a player's id again each time they rejoined, and Card didn't skip repeats, so the second copy took the free slot's line once someone left. Now a rejoin moves the player to the end of `order`, and Card lists each player once. The lobby's owner (who draws the message) needs 166.
+
 Test update (2026-11-14, Experimental 165, the user's request): no changes, the same code as 164; published only to check that kits update themselves.
 
 Joins on direct links failing (2026-11-13, Experimental 164, not yet tried). Logs from DixMckenzie (DIXMPCEE, Windows, Stable 13) and Apera01 (FEDORA, the Flatpak under Wine), both on 192.168.2.x. Every join between them over a direct EOS link failed: the host's game packets went through (Dix "game out 70", Fedora "in 69") but the joiner's game barely answered (9 out) and showed 84 / 53 after about 5 s; pdnet's pings on the same links were fine (20 ms). The one connection that went through Epic's relay (18:52, after a failed attempt forced relays) played a whole match. Dix's relayed link to another PC on the same network worked too; every direct link from the Fedora PC failed (to Dix, 0002dca1, 0002e385).

@@ -443,3 +443,4 @@ fi
 say "Keep this kit folder where it is: the updates go through it."
 say "The first title screen should say \"Rebirth\". Your Xbox profile doesn't show while pdnet is on: make a new one."
 say "After a test: $0 --logs     To stop using pdnet: $0 --remove"
+say "PD Helper (arsenal editor; optional, now or any time later): bash \"$kit/pdhelper-linux.sh\""
